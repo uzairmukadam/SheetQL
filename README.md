@@ -1,6 +1,6 @@
 # SheetQL: Interactive SQL Query Tool for Data Files
 
-**Query, analyze, and report on your local data files (Excel, CSV, Parquet) using the power of SQL, right from your terminal.**
+**Query, analyze, and report on your local data files (Excel, CSV) using the power of SQL, right from your terminal.**
 
 This tool provides a simple yet powerful command-line interface to load data from multiple spreadsheet files directly into an in-memory database, allowing you to run complex SQL queries without cumbersome manual steps. It's designed for data analysts, business professionals, and anyone who needs to quickly analyze spreadsheet and data files.
 
@@ -38,7 +38,7 @@ git clone [https://github.com/uzairmukadam/sheetql.git](https://github.com/uzair
 cd sheetql
 ```
 
-Alternatively, you can just download the ```sheet_ql.py``` and ```requirements.txt``` files into the same folder.
+Alternatively, you can just download the `sheet_ql.py` and `requirements.txt` files into the same folder.
 
 ### 2. Set Up a Virtual Environment (Recommended)
 
@@ -57,7 +57,7 @@ source venv/bin/activate
 
 ### 3. Install Required Libraries
 
-Install all the necessary Python libraries using the provided ```requirements.txt``` file.
+Install all the necessary Python libraries using the provided `requirements.txt` file.
 
 ```bash
 pip install -r requirements.txt
@@ -114,8 +114,6 @@ Contributions are welcome! If you have ideas for new features, bug fixes, or imp
 
 1.  Open an issue to discuss what you would like to change.
 2.  Fork the repository and create a pull request with your changes.
-
-Please make sure to update tests as appropriate.
 
 ## 🚀 Future Features
 
