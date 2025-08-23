@@ -9,7 +9,7 @@ This tool provides a simple yet powerful command-line interface to load data fro
 
 ## 🚀 Key Features
 
-* **Broad File Support**: Natively query **Excel** (`.xlsx`, `.xls`), **CSV** (`.csv`), and **Apache Parquet** (`.parquet`) files.
+* **Broad File Support**: Natively query **Excel** (`.xlsx`, `.xls`) and **CSV** (`.csv`) files.
 * **Dynamic File Loading**: Load additional files into your session at any time with the `.load` command without restarting.
 * **Interactive SQL Console**: Run standard SQL queries in a live, interactive terminal session.
 * **GUI & CLI File Selection**: Uses a graphical file picker if available, but gracefully falls back to a command-line interface on headless systems.
