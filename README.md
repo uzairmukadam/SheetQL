@@ -2,14 +2,14 @@
 
 **Query, analyze, and report on your local data files (Excel, CSV) using the power of SQL, right from your terminal.**
 
-This tool provides a simple yet powerful command-line interface to load data from multiple spreadsheet files directly into an in-memory database, allowing you to run complex SQL queries without cumbersome manual steps. It's designed for data analysts, business professionals, and anyone who needs to quickly analyze spreadsheet and data files.
+SheetQL is a powerful command-line tool that transforms your local data files (Excel, CSV, and Parquet) into a relational database, allowing you to run complex SQL queries without cumbersome manual steps. It's designed for data analysts, software engineers, and business professionals who need to quickly analyze spreadsheet data with the speed and precision of SQL.
 
 
 ---
 
 ## 🚀 Key Features
 
-* **Broad File Support**: Natively query **Excel** (`.xlsx`, `.xls`) and **CSV** (`.csv`) files.
+* **Broad File Support**: Natively query **Excel** (`.xlsx`, `.xls`), **CSV** (`.csv`) and **Apache Parquet** (`.parquet`) files.
 * **Dynamic File Loading**: Load additional files into your session at any time with the `.load` command without restarting.
 * **Interactive SQL Console**: Run standard SQL queries in a live, interactive terminal session.
 * **GUI & CLI File Selection**: Uses a graphical file picker if available, but gracefully falls back to a command-line interface on headless systems.
@@ -86,20 +86,22 @@ After loading, the tool will print a list of all available tables. You can renam
 
 You can now type your SQL queries directly into the terminal.
 * **End with a Semicolon**: Every SQL query must end with a semicolon (`;`).
-* **Column Names**: If a column name contains spaces, you **must** wrap it in double quotes (e.g., `"Award Amount"`).
+* **Column Names**: If a column name contains spaces, you **must** wrap it in double quotes (e.g., `"Total Amount"`).
 
 ### Step 4: Use Meta-Commands
 
 Instead of a SQL query, you can type special commands (starting with a dot):
 
 * `.help`: Displays a list of all available commands.
+* `.tables`: Displays a list all available tables.
 * `.load`: Opens the file selection dialog to add more files to the current session.
 * `.rename <old_name> <new_name>`: Renames a table (view).
+* `.export`: Exports all the staged results to an Excel file.
 * `.exit` or `.quit`: Exits the application and proceeds to the final save step.
 
 ### Step 5: Save Your Results
 
-After a query runs successfully, you will be prompted to save the results. You can stage multiple results, and they will all be saved into a single, formatted Excel report when you exit.
+After a query runs successfully, you will be prompted to stage the results for saving. You can stage multiple results and then use the `.export` command to save them all to a single, formatted Excel report.
 
 ## 💡 Troubleshooting
 
@@ -120,6 +122,7 @@ Contributions are welcome! If you have ideas for new features, bug fixes, or imp
 I have a number of exciting features planned for future releases:
 
 * **Persistent Sessions**: Save and load your entire session, including loaded tables and renames, so you can pick up where you left off.
+* **Automated Batch Execution**: A command to load a file with sql queries and execute them automatically.
 * **Query History**: A `.history` command to view and re-run previous queries.
 * **Saved Queries**: An option to save your favorite or most-used queries with an alias for quick execution.
 * **Additional Export Formats**: Support for exporting query results to CSV, JSON, and Markdown.
