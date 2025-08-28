@@ -1,4 +1,3 @@
-# query_tool.py
 import os
 import re
 import pandas as pd
@@ -46,7 +45,6 @@ class SheetQL:
             self._list_tables()
 
             self._run_interactive_loop()
-            self._save_results()
 
         except Exception as e:
             self.console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
@@ -69,9 +67,10 @@ class SheetQL:
         file_paths = filedialog.askopenfilenames(
             title="Select Data Files (Excel, CSV, Parquet)",
             filetypes=[
-                ("Supported Files", "*.xlsx *.xls *.csv"),
+                ("Supported Files", "*.xlsx *.xls *.csv *.parquet"),
                 ("Excel Files", "*.xlsx *.xls"),
                 ("CSV Files", "*.csv"),
+                ("Parquet Files", "*.parquet"),
                 ("All files", "*.*")
             ],
         )
@@ -80,7 +79,7 @@ class SheetQL:
 
     def _select_files_cli(self) -> Optional[List[str]]:
         """Prompts for file paths in the command line."""
-        self.console.print("\n[cyan]Please enter the full path to your data file(s) (Excel, CSV).[/cyan]")
+        self.console.print("\n[cyan]Please enter the full path to your data file(s) (Excel, CSV, Parquet).[/cyan]")
         self.console.print("[cyan]You can enter multiple paths separated by commas.[/cyan]")
         paths_input = self.console.input("[bold]File path(s): [/bold]")
         
@@ -155,7 +154,8 @@ class SheetQL:
                 line = self.console.input(prompt)
                 query_buffer += line + " "
             except (KeyboardInterrupt, EOFError):
-                break
+                if self._handle_meta_command(".exit"):
+                    break
 
             if line.strip().lower().startswith('.'):
                 if self._handle_meta_command(line.strip()):
@@ -173,18 +173,29 @@ class SheetQL:
         command = command_parts[0]
 
         if command in ['.exit', '.quit']:
+            if self.results_to_save:
+                self.console.print("\n[bold yellow]Warning: You have staged results that have not been exported.[/bold yellow]")
+                choice = self.console.input("Export before quitting? (y/n): ").lower()
+                if choice in ['y', 'yes']:
+                    self._export_results()
             return True
         elif command == '.help':
             self.console.print("\n[bold]Available Commands:[/bold]")
             self.console.print("[yellow].help[/yellow]                      - Show this help message.")
+            self.console.print("[yellow].tables[/yellow]                    - List all available tables.")
             self.console.print("[yellow].load[/yellow]                      - Load additional data files into the session.")
-            self.console.print("[yellow].rename <old> <new>[/yellow]        - Rename a table (view).")
+            self.console.print("[yellow].rename <old> <new>[/yellow]        - Rename a table.")
+            self.console.print("[yellow].export[/yellow]                    - Export staged results to an Excel file.")
             self.console.print("[yellow].exit[/yellow]                      - Exit the application.")
             self.console.print("\nEnd any SQL query with a semicolon ';'.")
+        elif command == '.tables':
+            self._list_tables()
         elif command == '.load':
             self._add_new_files()
         elif command == '.rename':
             self._rename_table(command_parts)
+        elif command == '.export':
+            self._export_results()
         else:
             self.console.print(f"[red]Unknown command: '{command}'. Type .help for assistance.[/red]")
         return False
@@ -254,12 +265,12 @@ class SheetQL:
 
     def _prompt_to_save(self, results: pd.DataFrame):
         """Asks the user if they want to save the results."""
-        save_choice = self.console.input("\n[bold]💾 Save these results? (y/n): [/bold]").lower()
+        save_choice = self.console.input("\n[bold]💾 Stage these results for export? (y/n): [/bold]").lower()
         if save_choice in ['y', 'yes']:
             sheet_name = self.console.input("[bold]   Enter a name for the Excel sheet: [/bold]")
             if sheet_name:
                 self.results_to_save[sheet_name] = results
-                self.console.print(f"[green]   ✔ Results staged to be saved as sheet '{sheet_name}'.[/green]")
+                self.console.print(f"[green]   ✔ Results staged. Use .export to save.[/green]")
             else:
                 self.console.print("[yellow]   Sheet name cannot be empty. Results not staged.[/yellow]")
 
@@ -291,9 +302,10 @@ class SheetQL:
             
         return save_path
 
-    def _save_results(self):
-        """Saves all staged results to a single, formatted Excel file."""
+    def _export_results(self):
+        """Saves all staged results to a single, formatted Excel file and clears the stage."""
         if not self.results_to_save:
+            self.console.print("[yellow]No results are staged for export. Run a query and stage it first.[/yellow]")
             return
 
         if TKINTER_AVAILABLE:
@@ -309,6 +321,7 @@ class SheetQL:
                             df.to_excel(writer, sheet_name=sheet_name, index=False)
                         self._format_excel_sheets(writer)
                 self.console.print(f"\n[bold green]✨ Success! All {len(self.results_to_save)} result(s) saved to '{os.path.basename(save_path)}'[/bold green]")
+                self.results_to_save.clear()
             except Exception as e:
                 self.console.print(f"[bold red]Error during save: {e}[/bold red]")
         else:
