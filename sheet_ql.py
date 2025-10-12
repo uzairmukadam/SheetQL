@@ -1,6 +1,5 @@
 import os
 import re
-import sys
 import argparse
 from collections import deque
 import pandas as pd
@@ -254,7 +253,6 @@ class SheetQL:
             ".export": self._export_results,
         }
         if command in commands:
-            result = commands[command]()
             if command in [".exit", ".quit"]:
                 if self.results_to_save:
                     choice = self.console.input(
@@ -338,7 +336,7 @@ class SheetQL:
             if sheet_name:
                 self.results_to_save[sheet_name] = results
                 self.console.print(
-                    f"[green]    ✔ Results staged. Use .export to save.[/green]"
+                    "[green]    ✔ Results staged. Use .export to save.[/green]"
                 )
             else:
                 self.console.print(
@@ -504,7 +502,7 @@ class SheetQL:
                 )
         except (ValueError, IndexError):
             self.console.print(
-                f"[red]Invalid history command. Use !N where N is a number.[/red]"
+                "[red]Invalid history command. Use !N where N is a number.[/red]"
             )
 
     def _run_script_interactive(self, command_parts: list[str]) -> None:
@@ -533,7 +531,7 @@ class SheetQL:
             )
             self._execute_yaml_script(config)
             self.console.print(
-                f"[bold green]✔ Script finished. Current tables:[/bold green]"
+                "[bold green]✔ Script finished. Current tables:[/bold green]"
             )
             self._list_tables()
         except FileNotFoundError:
