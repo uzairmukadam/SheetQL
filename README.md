@@ -1,15 +1,18 @@
 # SheetQL: Interactive SQL Query Tool for Data Files
 
-**Query, analyze, and report on your local data files (Excel, CSV) using the power of SQL, right from your terminal.**
+**Query, analyze, and report on your local data files using the power of SQL, right from your terminal.**
 
-SheetQL is a powerful command-line tool that transforms your local data files (Excel, CSV, and Parquet) into a relational database, allowing you to run complex SQL queries without cumbersome manual steps. It's designed for data analysts, software engineers, and business professionals who need to quickly analyze spreadsheet data with the speed and precision of SQL.
+SheetQL is a powerful command-line tool that transforms your local data files (Excel, CSV, JSON, and Parquet) into a relational database, allowing you to run complex SQL queries without cumbersome manual steps. It's designed for data analysts, software engineers, and anyone who needs to quickly analyze data with the speed and precision of SQL.
 
 
 ---
 
 ## 🚀 Key Features
 
-* **Broad File Support**: Natively query **Excel** (`.xlsx`, `.xls`), **CSV** (`.csv`) and **Apache Parquet** (`.parquet`) files.
+* **Broad File Support**: Natively query **Excel** (`.xlsx`, `.xls`), **CSV** (`.csv`), **JSON** (`.json`, `.jsonl`) and **Apache Parquet** (`.parquet`) files.
+* **Powerful Automation**: Execute complex workflows non-interactively with **YAML scripts** for reproducible analysis and reporting.
+* **Interactive SQL Console**: Run standard SQL queries in a live, multi-line terminal session with command history.
+* **Live Session Introspection**: Check table structures with the `.schema` command and review past queries with `.history`.
 * **Dynamic File Loading**: Load additional files into your session at any time with the `.load` command without restarting.
 * **Interactive SQL Console**: Run standard SQL queries in a live, interactive terminal session.
 * **GUI & CLI File Selection**: Uses a graphical file picker if available, but gracefully falls back to a command-line interface on headless systems.
@@ -21,7 +24,7 @@ SheetQL is a powerful command-line tool that transforms your local data files (E
 
 ## 📋 System Requirements
 
-* **Python**: Version 3.7 or newer.
+* **Python**: Version 3.9 or newer.
 * **Operating System**: Windows, macOS, or Linux.
 * **Tkinter (Optional)**: For the graphical file dialogs. If not present, the tool will use a command-line fallback.
 
@@ -65,10 +68,20 @@ pip install -r requirements.txt
 
 ## ▶️ How to Run
 
-Once the installation is complete, you can start the application with a single command from your terminal:
+### Interactive Mode
+
+Start the application with a single command to enter the interactive SQL shell.
 
 ```bash
 python sheet_ql.py
+```
+
+### Batch Mode (via YAML)
+
+Execute a predefined script non-interactively. This is perfect for automated reporting.
+
+```bash
+python sheet_ql.py --run your_script.yml
 ```
 
 ## 📖 Usage Instructions
@@ -94,14 +107,50 @@ Instead of a SQL query, you can type special commands (starting with a dot):
 
 * `.help`: Displays a list of all available commands.
 * `.tables`: Displays a list all available tables.
+* `.schema <table_name>`: Shows the columns and data types for a table.
+* `.history`: Displays the last 50 queries.
 * `.load`: Opens the file selection dialog to add more files to the current session.
 * `.rename <old_name> <new_name>`: Renames a table (view).
+* `.runscript [path]`: Executes a YAML script in the current session.
 * `.export`: Exports all the staged results to an Excel file.
 * `.exit` or `.quit`: Exits the application and proceeds to the final save step.
 
-### Step 5: Save Your Results
+### Step 5: Rerun from History
+
+Type `!N` (e.g., `!5`) to re-execute the Nth query from your `.history`.
+
+### Step 6: Save Your Results
 
 After a query runs successfully, you will be prompted to stage the results for saving. You can stage multiple results and then use the `.export` command to save them all to a single, formatted Excel report.
+
+## ⚙️ Automated Execution with YAML
+
+You can automate a sequence of actions by creating a `.yml` script file. This allows you to load files, apply aliases, run queries, and export a report with a single command.
+
+Example `script.yml`:
+
+```bash
+inputs:
+  - path: './data/sales.xlsx'
+    alias: sales
+  - path: './data/employees.csv'
+    alias: emps
+
+tasks:
+  - name: 'High_Value_Sales'
+    sql: >
+      SELECT * FROM sales_xlsx_Sheet1
+      WHERE Amount > 5000;
+  
+  - name: 'Sales_by_Employee'
+    sql: >
+      SELECT e.Name, COUNT(s.ID) as TotalSales
+      FROM sales_xlsx_Sheet1 s JOIN emps_csv e ON s.EmpID = e.ID
+      GROUP BY e.Name;
+
+export:
+  path: './reports/final_report.xlsx'
+```
 
 ## 💡 Troubleshooting
 
@@ -119,11 +168,7 @@ Contributions are welcome! If you have ideas for new features, bug fixes, or imp
 
 ## 🚀 Future Features
 
-I have a number of exciting features planned for future releases:
-
 * **Persistent Sessions**: Save and load your entire session, including loaded tables and renames, so you can pick up where you left off.
-* **Automated Batch Execution**: A command to load a file with sql queries and execute them automatically.
-* **Query History**: A `.history` command to view and re-run previous queries.
 * **Saved Queries**: An option to save your favorite or most-used queries with an alias for quick execution.
 * **Additional Export Formats**: Support for exporting query results to CSV, JSON, and Markdown.
 * **Basic Charting**: A command to generate simple text-based charts in the terminal or save graphical charts to an image file.
