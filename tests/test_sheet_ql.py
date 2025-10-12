@@ -1,10 +1,9 @@
 import unittest
 import os
 import sys
-import io
 import pandas as pd
 import shutil
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 import duckdb
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -18,23 +17,18 @@ class TestSheetQL(unittest.TestCase):
         self.test_dir = 'test_temp_data'
         os.makedirs(self.test_dir, exist_ok=True)
         
-        # --- Create Sample Data Files ---
-        # 1. CSV
         self.csv_path = os.path.join(self.test_dir, 'sample.csv')
         pd.DataFrame({
             'ID': [1, 2, 3], 'Name': ['Alice', 'Bob', 'Charlie'], 'Value': [100, 200, 150]
         }).to_csv(self.csv_path, index=False)
 
-        # 2. Excel
         self.excel_path = os.path.join(self.test_dir, 'sample.xlsx')
         with pd.ExcelWriter(self.excel_path) as writer:
             pd.DataFrame({'City': ['NY', 'LA'], 'Population': [8.4, 3.9]}).to_excel(writer, sheet_name='Cities', index=False)
 
-        # 3. JSON
         self.json_path = os.path.join(self.test_dir, 'sample.json')
         pd.DataFrame({'Product': ['Widget', 'Gadget']}).to_json(self.json_path, orient='records')
 
-        # 4. YAML Script
         self.script_path = os.path.join(self.test_dir, 'script.yml')
         with open(self.script_path, 'w') as f:
             f.write(f"""
@@ -48,7 +42,7 @@ tasks:
 """)
 
         self.tool = SheetQL()
-        self.tool.console = unittest.mock.MagicMock()
+        self.tool.console = MagicMock()
         self.tool.db_connection = duckdb.connect(database=':memory:')
 
     def tearDown(self):
@@ -120,6 +114,60 @@ tasks:
         
         self.assertEqual(len(result_df), 2)
         self.assertSetEqual(set(result_df['Name']), {'Bob', 'Charlie'})
+
+    def test_07_load_command(self):
+        """Test loading a new file mid-session with the '.load' command."""
+        self.tool._register_dataframes(self.tool._load_data([self.csv_path]))
+        initial_tables = self.tool.db_connection.execute("SHOW TABLES;").fetchdf()['name'].tolist()
+        self.assertIn('sample_csv', initial_tables)
+        self.assertNotIn('sample_json', initial_tables)
+
+        with patch.object(self.tool, '_prompt_for_paths', return_value=[self.json_path]):
+            self.tool._add_new_files()
         
+        final_tables = self.tool.db_connection.execute("SHOW TABLES;").fetchdf()['name'].tolist()
+        self.assertIn('sample_csv', final_tables)
+        self.assertIn('sample_json', final_tables)
+    
+    @patch('sheet_ql.SheetQL._format_excel_sheets')
+    @patch('sheet_ql.SheetQL._prompt_for_paths')
+    def test_08_export_command(self, mock_prompt, mock_format):
+        """Test the '.export' command workflow."""
+        self.tool.results_to_save['my_results'] = pd.DataFrame({'a': [1]})
+        self.assertTrue(self.tool.results_to_save)
+
+        # Use the safe, temporary test directory
+        save_path = os.path.join(self.test_dir, 'report.xlsx')
+        mock_prompt.return_value = [save_path]
+
+        self.tool._export_results()
+        
+        mock_prompt.assert_called_once()
+        mock_format.assert_called_once()
+        self.assertFalse(self.tool.results_to_save, "The results_to_save dictionary should be empty after export.")
+
+    @patch('sheet_ql.SheetQL._export_results')
+    def test_09_exit_command_with_save_prompt(self, mock_export):
+        """Test that '.exit' prompts to save when results are staged."""
+        self.tool.console.input.return_value = 'y'
+        self.tool.results_to_save['my_results'] = pd.DataFrame({'a': [1]})
+        
+        should_exit = self.tool._handle_meta_command('.exit')
+
+        self.assertTrue(should_exit)
+        self.tool.console.input.assert_called_once()
+        mock_export.assert_called_once()
+
+    @patch.object(SheetQL, '_execute_query')
+    def test_10_history_rerun_command(self, mock_execute):
+        """Test the '!N' history rerun command."""
+        self.tool._register_dataframes(self.tool._load_data([self.csv_path]))
+        query = "SELECT * FROM sample_csv;"
+        self.tool.history.append(query)
+
+        self.tool._handle_history_rerun("!1")
+        
+        mock_execute.assert_called_once_with(query)
+
 if __name__ == '__main__':
     unittest.main()
