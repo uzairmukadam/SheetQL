@@ -3,3 +3,4 @@ openpyxl
 duckdb
 rich
 pyarrow
+pyyaml
