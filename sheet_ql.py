@@ -4,7 +4,7 @@ import argparse
 from collections import deque
 import pandas as pd
 import duckdb
-from typing import Any
+from typing import Any, Optional
 
 from rich.console import Console
 from rich.table import Table
@@ -38,7 +38,7 @@ class SheetQL:
     def __init__(self) -> None:
         """Initializes the SheetQL tool."""
         self.console = Console()
-        self.db_connection: duckdb.DuckDBPyConnection | None = None
+        self.db_connection: Optional[duckdb.DuckDBPyConnection] = None
         self.results_to_save: dict[str, pd.DataFrame] = {}
         self.history: deque[str] = deque(maxlen=self.HISTORY_MAX_LEN)
 
@@ -117,7 +117,7 @@ class SheetQL:
 
     def _prompt_for_paths(
         self, title: str, filetypes: list[tuple[str, str]], allow_multiple: bool
-    ) -> list[str] | None:
+    ) -> Optional[list[str]]:
         """Generic method to get file paths from the user via GUI or CLI."""
         if TKINTER_AVAILABLE:
             root = tk.Tk()
@@ -252,19 +252,24 @@ class SheetQL:
             ".rename": lambda: self._rename_table(parts),
             ".export": self._export_results,
         }
-        if command in commands:
-            if command in [".exit", ".quit"]:
-                if self.results_to_save:
-                    choice = self.console.input(
-                        "Export staged results before quitting? (y/n): "
-                    ).lower()
-                    if choice.startswith("y"):
-                        self._export_results()
-                return True
-        else:
+
+        if command not in commands:
             self.console.print(
                 f"[red]Unknown command: '{command}'. Type .help for assistance.[/red]"
             )
+            return False
+
+        should_exit = commands[command]()
+
+        if should_exit and command in [".exit", ".quit"]:
+            if self.results_to_save:
+                choice = self.console.input(
+                    "Export staged results before quitting? (y/n): "
+                ).lower()
+                if choice.startswith("y"):
+                    self._export_results()
+            return True
+
         return False
 
     def _show_help(self) -> None:
