@@ -20,11 +20,7 @@ class TestSheetQL(unittest.TestCase):
 
         self.csv_path = os.path.join(self.test_dir, "sample.csv")
         pd.DataFrame(
-            {
-                "ID": [1, 2, 3],
-                "Name": ["Alice", "Bob", "Charlie"],
-                "Value": [100, 200, 150],
-            }
+            {"ID": [1, 2, 3], "Name": ["Alice", "Bob", "Charlie"], "Value": [100, 200, 150]}
         ).to_csv(self.csv_path, index=False)
 
         self.excel_path = os.path.join(self.test_dir, "sample.xlsx")
@@ -131,9 +127,9 @@ tasks:
     def test_07_load_command(self):
         """Test loading a new file mid-session with the '.load' command."""
         self.tool._register_dataframes(self.tool._load_data([self.csv_path]))
-        initial_tables = (
-            self.tool.db_connection.execute("SHOW TABLES;").fetchdf()["name"].tolist()
-        )
+        initial_tables = self.tool.db_connection.execute("SHOW TABLES;").fetchdf()[
+            "name"
+        ].tolist()
         self.assertIn("sample_csv", initial_tables)
         self.assertNotIn("sample_json", initial_tables)
 
@@ -142,26 +138,25 @@ tasks:
         ):
             self.tool._add_new_files()
 
-        final_tables = (
-            self.tool.db_connection.execute("SHOW TABLES;").fetchdf()["name"].tolist()
-        )
+        final_tables = self.tool.db_connection.execute("SHOW TABLES;").fetchdf()[
+            "name"
+        ].tolist()
         self.assertIn("sample_csv", final_tables)
         self.assertIn("sample_json", final_tables)
 
     @patch("sheet_ql.SheetQL._format_excel_sheets")
-    @patch("sheet_ql.SheetQL._prompt_for_paths")
-    def test_08_export_command(self, mock_prompt, mock_format):
+    @patch("sheet_ql.SheetQL._prompt_for_save_path")
+    def test_08_export_command(self, mock_prompt_save, mock_format):
         """Test the '.export' command workflow."""
         self.tool.results_to_save["my_results"] = pd.DataFrame({"a": [1]})
         self.assertTrue(self.tool.results_to_save)
 
-        # Use the safe, temporary test directory
         save_path = os.path.join(self.test_dir, "report.xlsx")
-        mock_prompt.return_value = [save_path]
+        mock_prompt_save.return_value = save_path
 
         self.tool._export_results()
 
-        mock_prompt.assert_called_once()
+        mock_prompt_save.assert_called_once()
         mock_format.assert_called_once()
         self.assertFalse(
             self.tool.results_to_save,
@@ -173,7 +168,7 @@ tasks:
         """Test that '.exit' prompts to save when results are staged."""
         self.tool.console.input.return_value = "y"
         self.tool.results_to_save["my_results"] = pd.DataFrame({"a": [1]})
-
+        
         should_exit = self.tool._handle_meta_command(".exit")
 
         self.assertTrue(should_exit)
