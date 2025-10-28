@@ -4,7 +4,7 @@ import argparse
 from collections import deque
 import pandas as pd
 import duckdb
-from typing import Any, Optional
+from typing import Any, Optional, List, Tuple, Dict
 
 from rich.console import Console
 from rich.table import Table
@@ -39,7 +39,7 @@ class SheetQL:
         """Initializes the SheetQL tool."""
         self.console = Console()
         self.db_connection: Optional[duckdb.DuckDBPyConnection] = None
-        self.results_to_save: dict[str, pd.DataFrame] = {}
+        self.results_to_save: Dict[str, pd.DataFrame] = {}
         self.history: deque[str] = deque(maxlen=self.HISTORY_MAX_LEN)
 
     def run_interactive(self) -> None:
@@ -116,9 +116,9 @@ class SheetQL:
             )
 
     def _prompt_for_paths(
-        self, title: str, filetypes: list[tuple[str, str]], allow_multiple: bool
-    ) -> Optional[list[str]]:
-        """Generic method to get file paths from the user via GUI or CLI."""
+        self, title: str, filetypes: List[Tuple[str, str]], allow_multiple: bool
+    ) -> Optional[List[str]]:
+        """Generic method to get existing file paths from the user."""
         if TKINTER_AVAILABLE:
             root = tk.Tk()
             root.withdraw()
@@ -147,7 +147,39 @@ class SheetQL:
 
         return valid_paths
 
-    def _load_data(self, file_paths: list[str]) -> dict[str, pd.DataFrame]:
+    def _prompt_for_save_path(self) -> Optional[str]:
+        """Prompts the user for a new file save path."""
+        if TKINTER_AVAILABLE:
+            root = tk.Tk()
+            root.withdraw()
+            save_path = filedialog.asksaveasfilename(
+                title="Select Save Location",
+                initialfile=self.DEFAULT_EXPORT_FILENAME,
+                defaultextension=".xlsx",
+                filetypes=[("Excel Files", "*.xlsx")],
+            )
+            root.destroy()
+            return save_path if save_path else None
+
+        self.console.print("\n[cyan]Please enter a save path for the export.[/cyan]")
+        save_path_input = self.console.input(
+            f"[bold]Save path (default: {self.DEFAULT_EXPORT_FILENAME}): [/bold]"
+        )
+        if not save_path_input:
+            save_path_input = self.DEFAULT_EXPORT_FILENAME
+
+        directory = os.path.dirname(save_path_input)
+        if directory and not os.path.exists(directory):
+            try:
+                os.makedirs(directory)
+            except OSError as e:
+                self.console.print(
+                    f"[red]Error: Could not create directory '{directory}'. {e}[/red]"
+                )
+                return None
+        return save_path_input
+
+    def _load_data(self, file_paths: List[str]) -> Dict[str, pd.DataFrame]:
         """Loads all supported files into pandas DataFrames."""
         all_dataframes = {}
         with self.console.status("[bold green]Loading data files...[/bold green]"):
@@ -196,7 +228,7 @@ class SheetQL:
         )
         return all_dataframes
 
-    def _register_dataframes(self, dataframes: dict[str, pd.DataFrame]) -> None:
+    def _register_dataframes(self, dataframes: Dict[str, pd.DataFrame]) -> None:
         """Registers new DataFrames as views in the existing DuckDB connection."""
         if not self.db_connection:
             return
@@ -240,7 +272,7 @@ class SheetQL:
         """Handles meta-commands. Returns True if the app should exit."""
         parts = command_str.split()
         command = parts[0].lower()
-        commands: dict[str, Any] = {
+        commands: Dict[str, Any] = {
             ".exit": lambda: True,
             ".quit": lambda: True,
             ".help": self._show_help,
@@ -354,14 +386,8 @@ class SheetQL:
             self.console.print("[yellow]No results are staged for export.[/yellow]")
             return
 
-        save_path = self._prompt_for_paths(
-            title="Select Save Location",
-            filetypes=[("Excel Files", "*.xlsx")],
-            allow_multiple=False,
-        )
-
-        if save_path and save_path[0]:
-            self._save_to_excel(save_path[0])
+        if save_path := self._prompt_for_save_path():
+            self._save_to_excel(save_path)
         else:
             self.console.print("[yellow]Save operation cancelled.[/yellow]")
 
@@ -395,11 +421,14 @@ class SheetQL:
                 cell.fill = header_fill
 
             for column_cells in worksheet.columns:
-                max_length = max(
-                    len(str(cell.value))
-                    for cell in column_cells
-                    if cell.value is not None
-                )
+                try:
+                    max_length = max(
+                        len(str(cell.value))
+                        for cell in column_cells
+                        if cell.value is not None
+                    )
+                except ValueError:
+                    max_length = 0
                 worksheet.column_dimensions[column_cells[0].column_letter].width = (
                     max_length + 2
                 )
@@ -437,7 +466,7 @@ class SheetQL:
                 self.console.print("[green]✔ New files loaded and registered.[/green]")
                 self._list_tables()
 
-    def _describe_table(self, command_parts: list[str]) -> None:
+    def _describe_table(self, command_parts: List[str]) -> None:
         """Shows the schema for a given table."""
         if len(command_parts) != 2:
             self.console.print("[red]Usage: .schema <table_name>[/red]")
@@ -462,7 +491,7 @@ class SheetQL:
         except Exception as e:
             self.console.print(f"[bold red]❌ Error describing table: {e}[/bold red]")
 
-    def _rename_table(self, command_parts: list[str]) -> None:
+    def _rename_table(self, command_parts: List[str]) -> None:
         """Renames a view in the database."""
         if len(command_parts) != 3:
             self.console.print(
@@ -510,7 +539,7 @@ class SheetQL:
                 "[red]Invalid history command. Use !N where N is a number.[/red]"
             )
 
-    def _run_script_interactive(self, command_parts: list[str]) -> None:
+    def _run_script_interactive(self, command_parts: List[str]) -> None:
         """Handles the .runscript meta-command."""
         script_path = command_parts[1] if len(command_parts) == 2 else None
         if not script_path:
@@ -546,7 +575,7 @@ class SheetQL:
         except yaml.YAMLError as e:
             self.console.print(f"[bold red]❌ Error parsing YAML file: {e}[/bold red]")
 
-    def _execute_yaml_script(self, config: dict[str, Any]) -> None:
+    def _execute_yaml_script(self, config: Dict[str, Any]) -> None:
         """Processes the actions defined in a parsed YAML script."""
         if "inputs" in config:
             self._process_yaml_inputs(config.get("inputs", []))
@@ -555,7 +584,7 @@ class SheetQL:
         if "export" in config:
             self._process_yaml_export(config.get("export", {}))
 
-    def _process_yaml_inputs(self, inputs: list[dict[str, str]]) -> None:
+    def _process_yaml_inputs(self, inputs: List[Dict[str, str]]) -> None:
         """Loads and aliases data files from a YAML script's 'inputs' block."""
         self.console.print("\n[bold]--- 1. Loading Input Files ---[/bold]")
         if not inputs:
@@ -590,7 +619,7 @@ class SheetQL:
                 self.db_connection.register(final_name, df)
         self.console.print("[green]✔ All specified inputs loaded and aliased.[/green]")
 
-    def _process_yaml_tasks(self, tasks: list[dict[str, str]]) -> None:
+    def _process_yaml_tasks(self, tasks: List[Dict[str, str]]) -> None:
         """Executes queries from a YAML script's 'tasks' block."""
         self.console.print("\n[bold]--- 2. Executing Tasks ---[/bold]")
         if not tasks:
@@ -613,7 +642,7 @@ class SheetQL:
                     f"[bold red]  ❌ Error in task '{name}': {e}[/bold red]"
                 )
 
-    def _process_yaml_export(self, export_config: dict[str, str]) -> None:
+    def _process_yaml_export(self, export_config: Dict[str, str]) -> None:
         """Exports staged results based on a YAML script's 'export' block."""
         self.console.print("\n[bold]--- 3. Exporting Results ---[/bold]")
         if not export_config:

@@ -149,19 +149,18 @@ tasks:
         self.assertIn("sample_json", final_tables)
 
     @patch("sheet_ql.SheetQL._format_excel_sheets")
-    @patch("sheet_ql.SheetQL._prompt_for_paths")
-    def test_08_export_command(self, mock_prompt, mock_format):
+    @patch("sheet_ql.SheetQL._prompt_for_save_path")
+    def test_08_export_command(self, mock_prompt_save, mock_format):
         """Test the '.export' command workflow."""
         self.tool.results_to_save["my_results"] = pd.DataFrame({"a": [1]})
         self.assertTrue(self.tool.results_to_save)
 
-        # Use the safe, temporary test directory
         save_path = os.path.join(self.test_dir, "report.xlsx")
-        mock_prompt.return_value = [save_path]
+        mock_prompt_save.return_value = save_path
 
         self.tool._export_results()
 
-        mock_prompt.assert_called_once()
+        mock_prompt_save.assert_called_once()
         mock_format.assert_called_once()
         self.assertFalse(
             self.tool.results_to_save,
