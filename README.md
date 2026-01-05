@@ -26,6 +26,7 @@ SheetQL is a powerful command-line tool that transforms your local data files (E
 
 * **Python**: Version 3.9 or newer.
 * **Operating System**: Windows, macOS, or Linux.
+* **Memory**: 4GB RAM recommended
 * **Tkinter (Optional)**: For the graphical file dialogs. If not present, the tool will use a command-line fallback.
 
 ---
@@ -60,116 +61,120 @@ source venv/bin/activate
 
 ### 3. Install Required Libraries
 
-Install all the necessary Python libraries using the provided `requirements.txt` file.
+Install the core tool along with the high-performance engines (Rust reader, streaming writer, autocomplete UI) using the provided requirements file.
 
 ```bash
 pip install -r requirements.txt
 ```
 
+**Note**: If you are on a restricted system where you cannot install high-performance packages (like `calamine` or `prompt_toolkit`), the tool will automatically fallback to standard libraries (`pandas`/`openpyxl`) to ensure functionality.
+
 ## ▶️ How to Run
 
 ### Interactive Mode
 
-Start the application with a single command to enter the interactive SQL shell.
+Launch the tool to explore data, run queries, and build reports interactively.
 
 ```bash
 python sheet_ql.py
 ```
 
-### Batch Mode (via YAML)
+### Batch Mode (Automation)
 
-Execute a predefined script non-interactively. This is perfect for automated reporting.
+Execute a saved pipeline script non-interactively. Perfect for scheduled tasks or "End of Month" reporting.
 
 ```bash
-python sheet_ql.py --run your_script.yml
+python sheet_ql.py --run monthly_report.yml
 ```
 
 ## 📖 Usage Instructions
 
 ### Step 1: Select Your Data Files
 
-* **With GUI**: A file dialog will pop up. Select one or more data files.
-* **Without GUI**: If `tkinter` is not installed, you will be prompted to enter the full file paths directly in the terminal.
+When the tool starts, select your files via the dialog or path input.
 
-### Step 2: Identify and Rename Your Tables
+* **CSV/Parquet**: Linked instantly (0ms load time) using Zero-Copy views.
+* **Excel**: Parsed rapidly using the Rust engine.
 
-After loading, the tool will print a list of all available tables. You can rename any table for convenience using the `.rename` command.
+### Step 2: Write SQL with Autocomplete
 
-### Step 3: Write SQL Queries
+Type your queries with support from the IntelliSense engine.
 
-You can now type your SQL queries directly into the terminal.
-* **End with a Semicolon**: Every SQL query must end with a semicolon (`;`).
-* **Column Names**: If a column name contains spaces, you **must** wrap it in double quotes (e.g., `"Total Amount"`).
+* **Tab Completion**: Press `Tab` to autocomplete keywords (`SELECT`, `WHERE`), table names, and columns.
 
-### Step 4: Use Meta-Commands
+* **Context Aware**: The tool intelligently suggests columns specific to the tables you are currently querying.
+
+### Step 3: Use Meta-Commands
 
 Instead of a SQL query, you can type special commands (starting with a dot):
 
-* `.help`: Displays a list of all available commands.
-* `.tables`: Displays a list all available tables.
-* `.schema <table_name>`: Shows the columns and data types for a table.
-* `.history`: Displays the last 50 queries.
-* `.load`: Opens the file selection dialog to add more files to the current session.
-* `.rename <old_name> <new_name>`: Renames a table (view).
-* `.runscript [path]`: Executes a YAML script in the current session.
-* `.export`: Exports all the staged results to an Excel file.
-* `.exit` or `.quit`: Exits the application and proceeds to the final save step.
+* `.tables`: List all loaded tables/views.
+* `.schema <table>`: View column names and data types.
+* `.load`: Add more files to the current session without restarting.
+* `.rename <old> <new>`: Rename a table alias (e.g., `sales_data_2023_v2` -> `sales`).
+* `.dump <filename.yml>`: Save your current session (inputs + queries) as a reusable script.
+* `.export`: Save all staged query results to a formatted Excel file.
+* `.history`: Display previous queries.
+* `.exit` or `.quit`: Exits the application (prompts to save first).
 
-### Step 5: Rerun from History
+### Step 4: Rerun from History
 
-Type `!N` (e.g., `!5`) to re-execute the Nth query from your `.history`.
+Made a mistake? Press Up Arrow to edit, or use history expansion:
+
+* `!N`: Rerun the Nth query in your history (e.g., `!3`).
 
 ### Step 6: Save Your Results
 
-After a query runs successfully, you will be prompted to stage the results for saving. You can stage multiple results and then use the `.export` command to save them all to a single, formatted Excel report.
+After a query runs successfully, you will be prompted to stage the results. You can stage multiple results and then use the `.export` command to save them all to a single, formatted Excel report.
 
 ## ⚙️ Automated Execution with YAML
 
-You can automate a sequence of actions by creating a `.yml` script file. This allows you to load files, apply aliases, run queries, and export a report with a single command.
+You no longer need to write YAML scripts by hand.
 
-Example `script.yml`:
+1. **Explore**: Load your files and run your queries interactively.
+2. **Stage**: When a query produces a good result, answer `y` when prompted to stage it.
+3. **Dump**: Run `.dump my_pipeline.yml`.
 
-```bash
+SheetQL will generate a production-ready script file for you:
+
+**Generated `my_pipeline.yml`**:
+
+```
 inputs:
-  - path: './data/sales.xlsx'
-    alias: sales
-  - path: './data/employees.csv'
-    alias: emps
+  - path: "C:/Data/raw_sales.csv"
+    alias: "sales_raw"
+  - path: "C:/Data/targets.xlsx"
+    alias: "targets"
 
 tasks:
-  - name: 'High_Value_Sales'
+  - name: "Q1_Performance"
     sql: >
-      SELECT * FROM sales_xlsx_Sheet1
-      WHERE Amount > 5000;
-  
-  - name: 'Sales_by_Employee'
-    sql: >
-      SELECT e.Name, COUNT(s.ID) as TotalSales
-      FROM sales_xlsx_Sheet1 s JOIN emps_csv e ON s.EmpID = e.ID
-      GROUP BY e.Name;
+      SELECT s.Region, SUM(s.Amount) 
+      FROM sales_raw s 
+      JOIN targets t ON s.Region = t.City
+      WHERE s.Amount > t.Goal
 
 export:
-  path: './reports/final_report.xlsx'
+  path: "C:/Reports/Q1_Summary.xlsx"
 ```
+
+To run this next month, simply execute: `python sheet_ql.py --run my_pipeline.yml`
 
 ## 💡 Troubleshooting
 
-* **No GUI File Dialog Appears**: The tool automatically falls back to a command-line interface if the `tkinter` library is not found. To enable the GUI, install `tkinter` using your system's package manager (e.g., `sudo apt-get install python3-tk`).
-* **SQL Error: "Referenced column not found"**:
-    * Check that you have wrapped column names with spaces in double quotes (e.g., `"First Name"`).
-    * Ensure you are using single quotes for string values in your `WHERE` clause (e.g., `WHERE Region = 'North'`).
+* **Logs**: If the application crashes or behaves unexpectedly, check the `sheetql.log` file created in the same directory. It contains detailed debug traces that are hidden from the main console.
+
+* **Memory Errors**: The tool is configured to use 75% of available RAM. If you hit limits on massive files, ensure you are using `.parquet` or `.csv` formats, which utilize DuckDB's out-of-core streaming.
+
+* **Missing Features**: If Autocomplete or Fast Excel loading is not working, check the startup banner. It will display the status of optional engines (e.g., `Rust-Excel [Red]`). Re-run `pip install -r requirements.txt`.
 
 ## 🤝 Contributing
 
-Contributions are welcome! If you have ideas for new features, bug fixes, or improvements, please feel free to:
-
-1.  Open an issue to discuss what you would like to change.
-2.  Fork the repository and create a pull request with your changes.
+Contributions are welcome! If you have ideas for new features, bug fixes, or improvements, please feel free to open an issue or fork the repository.
 
 ## 🚀 Future Features
 
 * **Persistent Sessions**: Save and load your entire session, including loaded tables and renames, so you can pick up where you left off.
-* **Saved Queries**: An option to save your favorite or most-used queries with an alias for quick execution.
 * **Additional Export Formats**: Support for exporting query results to CSV, JSON, and Markdown.
 * **Basic Charting**: A command to generate simple text-based charts in the terminal or save graphical charts to an image file.
 
