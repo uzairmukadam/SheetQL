@@ -1,6 +1,21 @@
-pandas
-openpyxl
-duckdb
-rich
-pyarrow
-pyyaml
+# --- Core Dependencies (Required) ---
+pandas>=2.0.0
+duckdb>=0.9.0
+rich>=13.0.0
+openpyxl>=3.1.0
+
+# --- User Interface & Autocomplete (Highly Recommended) ---
+# Needed for the smart dropdown menus and history navigation
+prompt_toolkit>=3.0.0
+pygments>=2.15.0
+
+# --- Performance Optimizations (Optional but Recommended) ---
+# Rust-based Excel reader (10x faster loading for .xlsx)
+python-calamine>=0.2.0
+
+# Streaming Excel writer (Faster saving / lower RAM usage)
+xlsxwriter>=3.1.0
+
+# --- Batch Processing (Optional) ---
+# Needed if you use the --run config.yaml mode
+pyyaml>=6.0.0
