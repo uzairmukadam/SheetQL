@@ -165,7 +165,7 @@ class TestSheetQL(unittest.TestCase):
     def test_08_rename_command(self):
         """Verifies the .rename meta-command updates DB and Cache."""
         self.tool._load_data([self.csv_path])
-        self.tool._handle_meta_command(f".rename sales_2023_csv old_sales")
+        self.tool._handle_meta_command(".rename sales_2023_csv old_sales")
 
         tables = (
             self.tool.db_connection.execute("SHOW TABLES").fetchdf()["name"].tolist()

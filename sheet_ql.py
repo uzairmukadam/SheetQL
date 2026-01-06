@@ -11,9 +11,9 @@ import os
 import re
 import argparse
 import logging
-import warnings
 from collections import deque
 from typing import Any, Optional, List, Tuple, Dict
+from importlib.util import find_spec
 
 import pandas as pd
 import duckdb
@@ -22,19 +22,12 @@ from rich.logging import RichHandler
 from rich.table import Table
 from openpyxl.styles import Font, PatternFill
 
-try:
-    import python_calamine
+# --- OPTIONAL DEPENDENCIES ---
+# We check for availability without importing the modules directly
+# to satisfy linters and avoid unused import warnings.
 
-    CALAMINE_AVAILABLE = True
-except ImportError:
-    CALAMINE_AVAILABLE = False
-
-try:
-    import xlsxwriter
-
-    XLSXWRITER_AVAILABLE = True
-except ImportError:
-    XLSXWRITER_AVAILABLE = False
+CALAMINE_AVAILABLE = find_spec("python_calamine") is not None
+XLSXWRITER_AVAILABLE = find_spec("xlsxwriter") is not None
 
 try:
     from prompt_toolkit import PromptSession
