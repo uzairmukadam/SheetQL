@@ -1,9 +1,9 @@
 """
 SheetQL: Professional Data Analysis & ETL Tool
 
-This module implements an interactive Command Line Interface (CLI) for querying 
-flat files (CSV, Excel, Parquet, JSON) using SQL. It leverages DuckDB for 
-high-performance in-memory processing and provides a "Zero-Copy" architecture 
+This module implements an interactive Command Line Interface (CLI) for querying
+flat files (CSV, Excel, Parquet, JSON) using SQL. It leverages DuckDB for
+high-performance in-memory processing and provides a "Zero-Copy" architecture
 for handling large datasets efficiently.
 """
 
@@ -24,12 +24,14 @@ from openpyxl.styles import Font, PatternFill
 
 try:
     import python_calamine
+
     CALAMINE_AVAILABLE = True
 except ImportError:
     CALAMINE_AVAILABLE = False
 
 try:
     import xlsxwriter
+
     XLSXWRITER_AVAILABLE = True
 except ImportError:
     XLSXWRITER_AVAILABLE = False
@@ -40,12 +42,14 @@ try:
     from prompt_toolkit.lexers import PygmentsLexer
     from pygments.lexers.sql import SqlLexer
     from prompt_toolkit.styles import Style
+
     PROMPT_TOOLKIT_AVAILABLE = True
 except ImportError:
     PROMPT_TOOLKIT_AVAILABLE = False
 
 try:
     import yaml
+
     YAML_AVAILABLE = True
 except ImportError:
     YAML_AVAILABLE = False
@@ -53,6 +57,7 @@ except ImportError:
 try:
     import tkinter as tk
     from tkinter import filedialog
+
     TKINTER_AVAILABLE = True
 except ImportError:
     TKINTER_AVAILABLE = False
@@ -76,10 +81,7 @@ def setup_logging(debug_mode: bool = False) -> logging.Logger:
 
     console_level = logging.DEBUG if debug_mode else logging.INFO
     rich_handler = RichHandler(
-        console=Console(stderr=True),
-        show_time=False,
-        show_path=False,
-        markup=True
+        console=Console(stderr=True), show_time=False, show_path=False, markup=True
     )
     rich_handler.setLevel(console_level)
     logger.addHandler(rich_handler)
@@ -105,25 +107,17 @@ class SessionRecorder:
 
     def record_load(self, path: str, alias: str) -> None:
         """Records a file load operation."""
-        self.inputs.append({
-            "path": path,
-            "alias": alias
-        })
+        self.inputs.append({"path": path, "alias": alias})
 
     def record_query(self, name: str, sql: str) -> None:
         """Records a transformation query, ignoring metadata commands."""
         if sql.strip().upper().startswith(("SHOW", "DESCRIBE", "PRAGMA")):
             return
-        self.transformations.append({
-            "name": name,
-            "sql": sql
-        })
+        self.transformations.append({"name": name, "sql": sql})
 
     def record_export(self, path: str) -> None:
         """Records an export operation."""
-        self.exports.append({
-            "path": path
-        })
+        self.exports.append({"path": path})
 
     def generate_yaml(self) -> str:
         """Serializes the recorded session into a YAML string."""
@@ -154,21 +148,55 @@ class SheetQLCompleter(Completer):
     def __init__(self, schema_cache: Dict[str, List[str]]):
         self.schema_cache = schema_cache
         self.keywords = [
-            "SELECT", "FROM", "WHERE", "GROUP BY", "ORDER BY", "LIMIT", "JOIN",
-            "LEFT JOIN", "RIGHT JOIN", "INNER JOIN", "ON", "AS", "DISTINCT",
-            "COUNT", "SUM", "AVG", "MIN", "MAX", "HAVING", "CASE", "WHEN",
-            "THEN", "ELSE", "END", "AND", "OR", "NOT", "IN", "IS NULL",
-            "IS NOT NULL", "LIKE", "ILIKE", "CAST", "DESCRIBE", "SHOW TABLES",
-            "PRAGMA", "EXPORT", "PIVOT", "UNION", "ALL"
+            "SELECT",
+            "FROM",
+            "WHERE",
+            "GROUP BY",
+            "ORDER BY",
+            "LIMIT",
+            "JOIN",
+            "LEFT JOIN",
+            "RIGHT JOIN",
+            "INNER JOIN",
+            "ON",
+            "AS",
+            "DISTINCT",
+            "COUNT",
+            "SUM",
+            "AVG",
+            "MIN",
+            "MAX",
+            "HAVING",
+            "CASE",
+            "WHEN",
+            "THEN",
+            "ELSE",
+            "END",
+            "AND",
+            "OR",
+            "NOT",
+            "IN",
+            "IS NULL",
+            "IS NOT NULL",
+            "LIKE",
+            "ILIKE",
+            "CAST",
+            "DESCRIBE",
+            "SHOW TABLES",
+            "PRAGMA",
+            "EXPORT",
+            "PIVOT",
+            "UNION",
+            "ALL",
         ]
 
     def get_completions(self, document, complete_event):
         word = document.get_word_before_cursor(WORD=True)
         upper_text = document.text_before_cursor.upper()
-        
+
         parts = upper_text.split()
         last_word = ""
-        
+
         if parts:
             if document.text_before_cursor.endswith(" ") or word == "":
                 last_word = parts[-1]
@@ -181,7 +209,7 @@ class SheetQLCompleter(Completer):
         # Context: Expecting a Table Name
         if last_word in ["FROM", "JOIN", "UPDATE", "INTO", "DESCRIBE"]:
             suggestions.extend([(t, "Table") for t in tables])
-        
+
         # Context: General SQL (Keywords + Columns)
         else:
             suggestions.extend([(k, "Keyword") for k in self.keywords])
@@ -194,7 +222,9 @@ class SheetQLCompleter(Completer):
         # Filter and yield matching results
         for suggestion, meta in suggestions:
             if suggestion.lower().startswith(word.lower()):
-                yield Completion(suggestion, start_position=-len(word), display_meta=meta)
+                yield Completion(
+                    suggestion, start_position=-len(word), display_meta=meta
+                )
 
 
 class SheetQL:
@@ -228,7 +258,13 @@ class SheetQL:
 
             if initial_paths := self._prompt_for_paths(
                 title="Select Data Files",
-                filetypes=[("Supported Files", "*.xlsx *.xls *.csv *.parquet *.json *.jsonl *.ndjson"), ("All files", "*.*")],
+                filetypes=[
+                    (
+                        "Supported Files",
+                        "*.xlsx *.xls *.csv *.parquet *.json *.jsonl *.ndjson",
+                    ),
+                    ("All files", "*.*"),
+                ],
                 allow_multiple=True,
             ):
                 self._load_data(initial_paths)
@@ -264,20 +300,38 @@ class SheetQL:
         try:
             self.db_connection.execute("SET memory_limit='75%';")
         except Exception:
-            self.logger.debug("DuckDB memory limit config failed. Proceeding with defaults.")
+            self.logger.debug(
+                "DuckDB memory limit config failed. Proceeding with defaults."
+            )
 
     def _display_welcome(self) -> None:
         """Prints startup banner."""
         self.console.print("[bold green]--- SheetQL Professional ---[/bold green]")
-        self.console.print("Commands: [yellow].help[/yellow], [yellow].load[/yellow], [yellow].dump <file>[/yellow]")
+        self.console.print(
+            "Commands: [yellow].help[/yellow], [yellow].load[/yellow], [yellow].dump <file>[/yellow]"
+        )
 
         status = []
-        status.append("[green]Rust-Excel[/green]" if CALAMINE_AVAILABLE else "[red]Rust-Excel[/red]")
-        status.append("[green]Stream-Write[/green]" if XLSXWRITER_AVAILABLE else "[red]Stream-Write[/red]")
-        status.append("[green]Autocomplete[/green]" if PROMPT_TOOLKIT_AVAILABLE else "[red]Autocomplete[/red]")
+        status.append(
+            "[green]Rust-Excel[/green]"
+            if CALAMINE_AVAILABLE
+            else "[red]Rust-Excel[/red]"
+        )
+        status.append(
+            "[green]Stream-Write[/green]"
+            if XLSXWRITER_AVAILABLE
+            else "[red]Stream-Write[/red]"
+        )
+        status.append(
+            "[green]Autocomplete[/green]"
+            if PROMPT_TOOLKIT_AVAILABLE
+            else "[red]Autocomplete[/red]"
+        )
         self.console.print(f"Engine Status: {', '.join(status)}")
 
-    def _prompt_for_paths(self, title: str, filetypes: List[Tuple[str, str]], allow_multiple: bool) -> Optional[List[str]]:
+    def _prompt_for_paths(
+        self, title: str, filetypes: List[Tuple[str, str]], allow_multiple: bool
+    ) -> Optional[List[str]]:
         """Gets file paths via GUI or CLI."""
         if TKINTER_AVAILABLE:
             root = tk.Tk()
@@ -305,18 +359,28 @@ class SheetQL:
                 try:
                     clean_path = str(file_path).replace("\\", "/")
                     ext = os.path.splitext(file_path)[1].lower()
-                    base = re.sub(r"[^a-zA-Z0-9_]+", "_", os.path.splitext(os.path.basename(file_path))[0])
+                    base = re.sub(
+                        r"[^a-zA-Z0-9_]+",
+                        "_",
+                        os.path.splitext(os.path.basename(file_path))[0],
+                    )
                     table_name = ""
 
                     if ext == ".parquet":
                         table_name = f"{base}_parquet"
-                        self.db_connection.execute(f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM '{clean_path}'")
+                        self.db_connection.execute(
+                            f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM '{clean_path}'"
+                        )
                     elif ext == ".csv":
                         table_name = f"{base}_csv"
-                        self.db_connection.execute(f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM read_csv_auto('{clean_path}')")
+                        self.db_connection.execute(
+                            f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM read_csv_auto('{clean_path}')"
+                        )
                     elif ext in [".json", ".jsonl"]:
                         table_name = f"{base}_json"
-                        self.db_connection.execute(f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM read_json_auto('{clean_path}')")
+                        self.db_connection.execute(
+                            f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM read_json_auto('{clean_path}')"
+                        )
 
                     elif ext in [".xlsx", ".xls"]:
                         engine = "calamine" if CALAMINE_AVAILABLE else None
@@ -328,8 +392,15 @@ class SheetQL:
                         with context as xls:
                             for sheet in xls.sheet_names:
                                 df = pd.read_excel(xls, sheet_name=sheet)
-                                df.columns = [re.sub(r"[^a-zA-Z0-9_]+", "_", str(c).strip()).lower() for c in df.columns]
-                                clean_sheet = re.sub(r"[^a-zA-Z0-9_]+", "_", sheet).lower()
+                                df.columns = [
+                                    re.sub(
+                                        r"[^a-zA-Z0-9_]+", "_", str(c).strip()
+                                    ).lower()
+                                    for c in df.columns
+                                ]
+                                clean_sheet = re.sub(
+                                    r"[^a-zA-Z0-9_]+", "_", sheet
+                                ).lower()
 
                                 table_name = f"{base}_{clean_sheet}"
                                 self.db_connection.register(table_name, df)
@@ -360,21 +431,28 @@ class SheetQL:
         for table in table_names:
             try:
                 schema_df = self.db_connection.execute(f"DESCRIBE {table}").fetchdf()
-                self.schema_cache[table] = schema_df['column_name'].tolist()
+                self.schema_cache[table] = schema_df["column_name"].tolist()
             except Exception:
                 pass
 
     def _run_interactive_loop(self) -> None:
         """Runs the command input loop."""
         query_buffer = ""
-        completer = SheetQLCompleter(self.schema_cache) if PROMPT_TOOLKIT_AVAILABLE else None
-        style = Style.from_dict({'prompt': 'ansicyan bold'})
+        completer = (
+            SheetQLCompleter(self.schema_cache) if PROMPT_TOOLKIT_AVAILABLE else None
+        )
+        style = Style.from_dict({"prompt": "ansicyan bold"})
 
         while True:
             prompt_text = self.PROMPT_SQL if not query_buffer else self.PROMPT_CONTINUE
             try:
                 if PROMPT_TOOLKIT_AVAILABLE and self.session:
-                    line = self.session.prompt(prompt_text, completer=completer, lexer=PygmentsLexer(SqlLexer), style=style)
+                    line = self.session.prompt(
+                        prompt_text,
+                        completer=completer,
+                        lexer=PygmentsLexer(SqlLexer),
+                        style=style,
+                    )
                 else:
                     line = self.console.input(prompt_text)
 
@@ -451,14 +529,24 @@ class SheetQL:
                         if engine == "xlsxwriter":
                             wb = writer.book
                             ws = writer.sheets[sheet_name]
-                            header_fmt = wb.add_format({'bold': True, 'fg_color': '#4F81BD', 'font_color': 'white'})
+                            header_fmt = wb.add_format(
+                                {
+                                    "bold": True,
+                                    "fg_color": "#4F81BD",
+                                    "font_color": "white",
+                                }
+                            )
                             for col_num, value in enumerate(df.columns.values):
                                 ws.write(0, col_num, value, header_fmt)
                             for i, col in enumerate(df.columns):
                                 ws.set_column(i, i, 20)
                         else:
                             header_font = Font(bold=True, color="FFFFFF")
-                            fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+                            fill = PatternFill(
+                                start_color="4F81BD",
+                                end_color="4F81BD",
+                                fill_type="solid",
+                            )
                             for ws in writer.book.worksheets:
                                 for cell in ws[1]:
                                     cell.font = header_font
@@ -477,7 +565,8 @@ class SheetQL:
         cmd = parts[0].lower()
 
         commands = {
-            ".exit": lambda: True, ".quit": lambda: True,
+            ".exit": lambda: True,
+            ".quit": lambda: True,
             ".help": self._show_help,
             ".tables": self._list_tables,
             ".schema": lambda: self._describe_table(parts),
@@ -495,7 +584,11 @@ class SheetQL:
 
         should_exit = commands[cmd]()
         if should_exit and cmd in [".exit", ".quit"] and self.results_to_save:
-            if self.console.input("Export staged results? (y/n): ").lower().startswith("y"):
+            if (
+                self.console.input("Export staged results? (y/n): ")
+                .lower()
+                .startswith("y")
+            ):
                 self._export_results()
         return should_exit
 
@@ -512,14 +605,20 @@ class SheetQL:
 
     def _show_help(self) -> None:
         self.console.print("\n[bold]Commands:[/bold]")
-        self.console.print("  .help, .tables, .schema <t>, .history, .load, .rename <o> <n>, .export, .exit")
-        self.console.print("  [bold yellow].dump <file>[/bold yellow]   Save current session to YAML")
-        self.console.print("  [bold yellow].runscript <file>[/bold yellow] Run a YAML script")
+        self.console.print(
+            "  .help, .tables, .schema <t>, .history, .load, .rename <o> <n>, .export, .exit"
+        )
+        self.console.print(
+            "  [bold yellow].dump <file>[/bold yellow]   Save current session to YAML"
+        )
+        self.console.print(
+            "  [bold yellow].runscript <file>[/bold yellow] Run a YAML script"
+        )
 
     def _list_tables(self) -> None:
         if self.db_connection:
             try:
-                tables = self.db_connection.execute("SHOW TABLES").fetchdf()['name']
+                tables = self.db_connection.execute("SHOW TABLES").fetchdf()["name"]
                 self.console.print(f"\n[cyan]Tables ({len(tables)}):[/cyan]")
                 for t in tables:
                     self.console.print(f" - {t}")
@@ -545,14 +644,23 @@ class SheetQL:
             try:
                 old_name_input = parts[1]
                 new_name = parts[2]
-                
+
                 # Update DB
-                self.db_connection.execute(f'ALTER VIEW "{old_name_input}" RENAME TO "{new_name}"')
+                self.db_connection.execute(
+                    f'ALTER VIEW "{old_name_input}" RENAME TO "{new_name}"'
+                )
                 self.logger.info(f"Renamed {old_name_input} -> {new_name}")
-                
+
                 # Update Cache (Robust lookup for case-insensitivity)
-                actual_key = next((k for k in self.schema_cache if k.lower() == old_name_input.lower()), old_name_input)
-                
+                actual_key = next(
+                    (
+                        k
+                        for k in self.schema_cache
+                        if k.lower() == old_name_input.lower()
+                    ),
+                    old_name_input,
+                )
+
                 if actual_key in self.schema_cache:
                     self.schema_cache[new_name] = self.schema_cache.pop(actual_key)
             except Exception as e:
@@ -579,7 +687,9 @@ class SheetQL:
             self.logger.warning("Nothing to export.")
             return
 
-        if path := self._prompt_for_paths("Save Location", [("Excel", "*.xlsx")], False):
+        if path := self._prompt_for_paths(
+            "Save Location", [("Excel", "*.xlsx")], False
+        ):
             save_dest = path[0] if isinstance(path, list) else path
             self._save_to_excel(save_dest)
         else:
@@ -609,13 +719,19 @@ class SheetQL:
         if "inputs" in config:
             paths = [i["path"] for i in config["inputs"]]
             loaded = self._load_data(paths)
-            alias_map = {os.path.basename(i["path"]): i.get("alias") for i in config["inputs"] if i.get("alias")}
+            alias_map = {
+                os.path.basename(i["path"]): i.get("alias")
+                for i in config["inputs"]
+                if i.get("alias")
+            }
 
             for tbl in loaded:
                 for fname, alias in alias_map.items():
-                    if fname.split('.')[0] in tbl:
+                    if fname.split(".")[0] in tbl:
                         try:
-                            self.db_connection.execute(f'ALTER VIEW "{tbl}" RENAME TO "{alias}"')
+                            self.db_connection.execute(
+                                f'ALTER VIEW "{tbl}" RENAME TO "{alias}"'
+                            )
                             self.logger.info(f"Aliased {tbl} -> {alias}")
                         except Exception:
                             pass
@@ -623,7 +739,9 @@ class SheetQL:
         if "tasks" in config:
             for task in config.get("tasks", []):
                 try:
-                    self.results_to_save[task["name"]] = self.db_connection.execute(task["sql"]).fetchdf()
+                    self.results_to_save[task["name"]] = self.db_connection.execute(
+                        task["sql"]
+                    ).fetchdf()
                     self.logger.info(f"Task '{task['name']}' complete.")
                 except Exception as e:
                     self.logger.error(f"Task '{task['name']}' failed: {e}")
@@ -635,7 +753,9 @@ class SheetQL:
 def main() -> None:
     parser = argparse.ArgumentParser(description="SheetQL Professional")
     parser.add_argument("-r", "--run", dest="config_path", help="Run batch config")
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging to console")
+    parser.add_argument(
+        "--debug", action="store_true", help="Enable debug logging to console"
+    )
     args = parser.parse_args()
 
     logger = setup_logging(args.debug)
