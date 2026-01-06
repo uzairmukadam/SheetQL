@@ -2,9 +2,11 @@
 SheetQL: Professional Data Analysis & ETL Tool
 
 This module implements an interactive Command Line Interface (CLI) for querying
-flat files (CSV, Excel, Parquet, JSON) using SQL. It leverages DuckDB for
-high-performance in-memory processing and provides a "Zero-Copy" architecture
-for handling large datasets efficiently.
+flat files (CSV, Excel, Parquet, JSON) using SQL. 
+
+Architecture:
+- CSV/Parquet/JSON: Uses DuckDB's "Zero-Copy" views for high performance on large files.
+- Excel: Uses Pandas to bridge data into DuckDB (requires memory for loading).
 """
 
 import os
@@ -23,9 +25,6 @@ from rich.table import Table
 from openpyxl.styles import Font, PatternFill
 
 # --- OPTIONAL DEPENDENCIES ---
-# We check for availability without importing the modules directly
-# to satisfy linters and avoid unused import warnings.
-
 CALAMINE_AVAILABLE = find_spec("python_calamine") is not None
 XLSXWRITER_AVAILABLE = find_spec("xlsxwriter") is not None
 
@@ -42,7 +41,6 @@ except ImportError:
 
 try:
     import yaml
-
     YAML_AVAILABLE = True
 except ImportError:
     YAML_AVAILABLE = False
@@ -50,16 +48,13 @@ except ImportError:
 try:
     import tkinter as tk
     from tkinter import filedialog
-
     TKINTER_AVAILABLE = True
 except ImportError:
     TKINTER_AVAILABLE = False
 
 
 def setup_logging(debug_mode: bool = False) -> logging.Logger:
-    """
-    Configures the application logging system with File and Console handlers.
-    """
+    """Configures the application logging system."""
     logger = logging.getLogger("SheetQL")
     logger.setLevel(logging.DEBUG)
     logger.handlers = []
@@ -79,19 +74,14 @@ def setup_logging(debug_mode: bool = False) -> logging.Logger:
     rich_handler.setLevel(console_level)
     logger.addHandler(rich_handler)
 
-    for lib in ["duckdb", "matplotlib", "PIL", "prompt_toolkit"]:
-        lib_logger = logging.getLogger(lib)
-        lib_logger.setLevel(logging.WARNING)
-        lib_logger.propagate = True
-
+    logging.getLogger("duckdb").setLevel(logging.WARNING)
+    logging.getLogger("prompt_toolkit").setLevel(logging.WARNING)
     logging.captureWarnings(True)
     return logger
 
 
 class SessionRecorder:
-    """
-    Records session activities (Loads, Queries, Exports) to generate YAML scripts.
-    """
+    """Records session activities to generate YAML scripts."""
 
     def __init__(self):
         self.inputs: List[Dict[str, str]] = []
@@ -99,24 +89,19 @@ class SessionRecorder:
         self.exports: List[Dict[str, str]] = []
 
     def record_load(self, path: str, alias: str) -> None:
-        """Records a file load operation."""
         self.inputs.append({"path": path, "alias": alias})
 
     def record_query(self, name: str, sql: str) -> None:
-        """Records a transformation query, ignoring metadata commands."""
         if sql.strip().upper().startswith(("SHOW", "DESCRIBE", "PRAGMA")):
             return
         self.transformations.append({"name": name, "sql": sql})
 
     def record_export(self, path: str) -> None:
-        """Records an export operation."""
         self.exports.append({"path": path})
 
     def generate_yaml(self) -> str:
-        """Serializes the recorded session into a YAML string."""
         if not YAML_AVAILABLE:
             return "# Error: PyYAML not installed."
-
         script = {}
         if self.inputs:
             script["inputs"] = self.inputs
@@ -124,69 +109,24 @@ class SessionRecorder:
             script["tasks"] = self.transformations
         if self.exports:
             script["export"] = self.exports[-1]
-
         return yaml.safe_dump(script, sort_keys=False, default_flow_style=False)
 
 
 class SheetQLCompleter(Completer):
-    """
-    Context-aware autocompletion provider for the interactive shell.
-
-    Provides suggestions for:
-    - SQL Keywords
-    - Table names (dynamic)
-    - Column names (from ALL tables, to allow 'SELECT col...' workflows)
-    """
+    """Context-aware autocompletion provider for the interactive shell."""
 
     def __init__(self, schema_cache: Dict[str, List[str]]):
         self.schema_cache = schema_cache
         self.keywords = [
-            "SELECT",
-            "FROM",
-            "WHERE",
-            "GROUP BY",
-            "ORDER BY",
-            "LIMIT",
-            "JOIN",
-            "LEFT JOIN",
-            "RIGHT JOIN",
-            "INNER JOIN",
-            "ON",
-            "AS",
-            "DISTINCT",
-            "COUNT",
-            "SUM",
-            "AVG",
-            "MIN",
-            "MAX",
-            "HAVING",
-            "CASE",
-            "WHEN",
-            "THEN",
-            "ELSE",
-            "END",
-            "AND",
-            "OR",
-            "NOT",
-            "IN",
-            "IS NULL",
-            "IS NOT NULL",
-            "LIKE",
-            "ILIKE",
-            "CAST",
-            "DESCRIBE",
-            "SHOW TABLES",
-            "PRAGMA",
-            "EXPORT",
-            "PIVOT",
-            "UNION",
-            "ALL",
+            "SELECT", "FROM", "WHERE", "GROUP BY", "ORDER BY", "LIMIT",
+            "JOIN", "LEFT JOIN", "INNER JOIN", "ON", "AS", "DISTINCT",
+            "COUNT", "SUM", "AVG", "CASE", "WHEN", "THEN", "ELSE", "END",
+            "DESCRIBE", "SHOW TABLES", "EXPORT",
         ]
 
     def get_completions(self, document, complete_event):
         word = document.get_word_before_cursor(WORD=True)
         upper_text = document.text_before_cursor.upper()
-
         parts = upper_text.split()
         last_word = ""
 
@@ -199,20 +139,15 @@ class SheetQLCompleter(Completer):
         tables = list(self.schema_cache.keys())
         suggestions = []
 
-        # Context: Expecting a Table Name
         if last_word in ["FROM", "JOIN", "UPDATE", "INTO", "DESCRIBE"]:
             suggestions.extend([(t, "Table") for t in tables])
-
-        # Context: General SQL (Keywords + Columns)
         else:
             suggestions.extend([(k, "Keyword") for k in self.keywords])
             suggestions.extend([(t, "Table") for t in tables])
-
             for table_name in tables:
                 cols = self.schema_cache.get(table_name, [])
                 suggestions.extend([(c, f"Column ({table_name})") for c in cols])
 
-        # Filter and yield matching results
         for suggestion, meta in suggestions:
             if suggestion.lower().startswith(word.lower()):
                 yield Completion(
@@ -221,9 +156,7 @@ class SheetQLCompleter(Completer):
 
 
 class SheetQL:
-    """
-    Main application controller. Orchestrates DB, UI, and ETL logic.
-    """
+    """Main application controller."""
 
     PROMPT_SQL = "SQL> "
     PROMPT_CONTINUE = "  -> "
@@ -238,13 +171,14 @@ class SheetQL:
         self.history: deque[str] = deque(maxlen=self.HISTORY_MAX_LEN)
         self.schema_cache: Dict[str, List[str]] = {}
         self.recorder = SessionRecorder()
-        self.session = None
+        
+        self.loaded_files_map: Dict[str, List[str]] = {}
 
+        self.session = None
         if PROMPT_TOOLKIT_AVAILABLE:
             self.session = PromptSession(history=None)
 
     def run_interactive(self) -> None:
-        """Starts the interactive REPL session."""
         try:
             self._display_welcome()
             self._init_db()
@@ -271,7 +205,6 @@ class SheetQL:
             self.logger.info("[bold cyan]👋 Goodbye![/bold cyan]")
 
     def run_batch(self, config_path: str) -> None:
-        """Runs a headless batch job from a YAML config."""
         self.logger.info(f"🚀 Batch mode: '{config_path}'")
         if not YAML_AVAILABLE:
             self.logger.error("PyYAML is not installed.")
@@ -288,44 +221,26 @@ class SheetQL:
         self._execute_yaml_script(config)
 
     def _init_db(self) -> None:
-        """Initializes DuckDB with memory limits."""
         self.db_connection = duckdb.connect(database=":memory:")
         try:
             self.db_connection.execute("SET memory_limit='75%';")
         except Exception:
-            self.logger.debug(
-                "DuckDB memory limit config failed. Proceeding with defaults."
-            )
+            self.logger.debug("DuckDB memory limit config failed. Using defaults.")
 
     def _display_welcome(self) -> None:
-        """Prints startup banner."""
         self.console.print("[bold green]--- SheetQL Professional ---[/bold green]")
         self.console.print(
             "Commands: [yellow].help[/yellow], [yellow].load[/yellow], [yellow].dump <file>[/yellow]"
         )
-
         status = []
-        status.append(
-            "[green]Rust-Excel[/green]"
-            if CALAMINE_AVAILABLE
-            else "[red]Rust-Excel[/red]"
-        )
-        status.append(
-            "[green]Stream-Write[/green]"
-            if XLSXWRITER_AVAILABLE
-            else "[red]Stream-Write[/red]"
-        )
-        status.append(
-            "[green]Autocomplete[/green]"
-            if PROMPT_TOOLKIT_AVAILABLE
-            else "[red]Autocomplete[/red]"
-        )
+        status.append("[green]Rust-Excel[/green]" if CALAMINE_AVAILABLE else "[red]Rust-Excel[/red]")
+        status.append("[green]Stream-Write[/green]" if XLSXWRITER_AVAILABLE else "[red]Stream-Write[/red]")
+        status.append("[green]Autocomplete[/green]" if PROMPT_TOOLKIT_AVAILABLE else "[red]Autocomplete[/red]")
         self.console.print(f"Engine Status: {', '.join(status)}")
 
     def _prompt_for_paths(
         self, title: str, filetypes: List[Tuple[str, str]], allow_multiple: bool
     ) -> Optional[List[str]]:
-        """Gets file paths via GUI or CLI."""
         if TKINTER_AVAILABLE:
             root = tk.Tk()
             root.withdraw()
@@ -341,8 +256,47 @@ class SheetQL:
         raw_paths = [p.strip().strip("'\"") for p in paths_input.split(",")]
         return [p for p in raw_paths if p and os.path.exists(p)]
 
+    def _prompt_for_save_path(self) -> Optional[str]:
+        """Prompts the user for a new file save path."""
+        if TKINTER_AVAILABLE:
+            root = tk.Tk()
+            root.withdraw()
+            
+            root.lift()
+            root.attributes('-topmost', True)
+
+            save_path = filedialog.asksaveasfilename(
+                title="Select Save Location",
+                initialfile=self.DEFAULT_EXPORT_FILENAME,
+                defaultextension=".xlsx",
+                filetypes=[("Excel Files", "*.xlsx")],
+            )
+            root.destroy()
+            return save_path if save_path else None
+
+        self.console.print("\n[cyan]Please enter a save path for the export.[/cyan]")
+        save_path_input = self.console.input(
+            f"[bold]Save path (default: {self.DEFAULT_EXPORT_FILENAME}): [/bold]"
+        )
+        if not save_path_input:
+            save_path_input = self.DEFAULT_EXPORT_FILENAME
+
+        directory = os.path.dirname(save_path_input)
+        if directory and not os.path.exists(directory):
+            try:
+                os.makedirs(directory)
+            except OSError as e:
+                self.console.print(
+                    f"[red]Error: Could not create directory '{directory}'. {e}[/red]"
+                )
+                return None
+        return save_path_input
+
+    def _escape_sql_path(self, path: str) -> str:
+        """Escapes single quotes in file paths to prevent SQL injection/errors."""
+        return path.replace("'", "''")
+
     def _load_data(self, file_paths: List[str]) -> List[str]:
-        """Loads files using Zero-Copy views or Pandas bridges."""
         if not self.db_connection:
             return []
         loaded_tables = []
@@ -351,29 +305,32 @@ class SheetQL:
             for file_path in file_paths:
                 try:
                     clean_path = str(file_path).replace("\\", "/")
+                    sql_safe_path = self._escape_sql_path(clean_path)
+                    
                     ext = os.path.splitext(file_path)[1].lower()
-                    base = re.sub(
-                        r"[^a-zA-Z0-9_]+",
-                        "_",
-                        os.path.splitext(os.path.basename(file_path))[0],
-                    )
+                    base = re.sub(r"[^a-zA-Z0-9_]+", "_", os.path.splitext(os.path.basename(file_path))[0])
                     table_name = ""
+                    
+                    generated_tables = []
 
                     if ext == ".parquet":
                         table_name = f"{base}_parquet"
                         self.db_connection.execute(
-                            f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM '{clean_path}'"
+                            f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM '{sql_safe_path}'"
                         )
+                        generated_tables.append(table_name)
                     elif ext == ".csv":
                         table_name = f"{base}_csv"
                         self.db_connection.execute(
-                            f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM read_csv_auto('{clean_path}')"
+                            f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM read_csv_auto('{sql_safe_path}')"
                         )
+                        generated_tables.append(table_name)
                     elif ext in [".json", ".jsonl"]:
                         table_name = f"{base}_json"
                         self.db_connection.execute(
-                            f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM read_json_auto('{clean_path}')"
+                            f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM read_json_auto('{sql_safe_path}')"
                         )
+                        generated_tables.append(table_name)
 
                     elif ext in [".xlsx", ".xls"]:
                         engine = "calamine" if CALAMINE_AVAILABLE else None
@@ -386,29 +343,31 @@ class SheetQL:
                             for sheet in xls.sheet_names:
                                 df = pd.read_excel(xls, sheet_name=sheet)
                                 df.columns = [
-                                    re.sub(
-                                        r"[^a-zA-Z0-9_]+", "_", str(c).strip()
-                                    ).lower()
+                                    re.sub(r"[^a-zA-Z0-9_]+", "_", str(c).strip()).lower()
                                     for c in df.columns
                                 ]
-                                clean_sheet = re.sub(
-                                    r"[^a-zA-Z0-9_]+", "_", sheet
-                                ).lower()
-
+                                clean_sheet = re.sub(r"[^a-zA-Z0-9_]+", "_", sheet).lower()
+                                
                                 table_name = f"{base}_{clean_sheet}"
                                 self.db_connection.register(table_name, df)
+                                
                                 loaded_tables.append(table_name)
+                                generated_tables.append(table_name)
                                 self.recorder.record_load(file_path, table_name)
-                        self._update_schema_cache(loaded_tables)
+                        
+                        self.loaded_files_map[file_path] = generated_tables
+                        self._update_schema_cache(generated_tables)
                         continue
 
                     else:
                         self.logger.warning(f"Skipping unsupported type: {ext}")
                         continue
 
-                    if table_name:
-                        loaded_tables.append(table_name)
-                        self.recorder.record_load(file_path, table_name)
+                    if generated_tables:
+                        loaded_tables.extend(generated_tables)
+                        self.loaded_files_map[file_path] = generated_tables
+                        for t in generated_tables:
+                            self.recorder.record_load(file_path, t)
 
                 except Exception as e:
                     self.logger.error(f"Failed to load '{file_path}': {e}")
@@ -418,7 +377,6 @@ class SheetQL:
         return loaded_tables
 
     def _update_schema_cache(self, table_names: List[str]) -> None:
-        """Fetches and caches table schemas."""
         if not self.db_connection:
             return
         for table in table_names:
@@ -429,11 +387,8 @@ class SheetQL:
                 pass
 
     def _run_interactive_loop(self) -> None:
-        """Runs the command input loop."""
         query_buffer = ""
-        completer = (
-            SheetQLCompleter(self.schema_cache) if PROMPT_TOOLKIT_AVAILABLE else None
-        )
+        completer = SheetQLCompleter(self.schema_cache) if PROMPT_TOOLKIT_AVAILABLE else None
         style = Style.from_dict({"prompt": "ansicyan bold"})
 
         while True:
@@ -474,7 +429,6 @@ class SheetQL:
                 query_buffer = ""
 
     def _execute_query(self, query: str) -> None:
-        """Runs SQL and displays results."""
         if not self.db_connection:
             return
         try:
@@ -491,7 +445,6 @@ class SheetQL:
             self.logger.error(f"SQL Error: {e}")
 
     def _display_results_table(self, df: pd.DataFrame) -> None:
-        """Formats DataFrame as a Rich table."""
         table = Table(show_header=True, header_style="bold magenta")
         for col in df.columns:
             table.add_column(str(col))
@@ -502,7 +455,6 @@ class SheetQL:
             self.console.print(f"... ({len(df)-15} more rows)")
 
     def _prompt_to_stage_results(self, results: pd.DataFrame, query: str) -> None:
-        """Offers to stage results for export."""
         if self.console.input("\nStage for export? (y/n): ").lower().startswith("y"):
             name = self.console.input("Sheet name: ")
             if name:
@@ -511,7 +463,6 @@ class SheetQL:
                 self.logger.info(f"Staged '{name}'")
 
     def _save_to_excel(self, save_path: str) -> None:
-        """Writes staged results to Excel."""
         try:
             with self.console.status("[bold green]Saving Excel file...[/bold green]"):
                 engine = "xlsxwriter" if XLSXWRITER_AVAILABLE else "openpyxl"
@@ -522,13 +473,9 @@ class SheetQL:
                         if engine == "xlsxwriter":
                             wb = writer.book
                             ws = writer.sheets[sheet_name]
-                            header_fmt = wb.add_format(
-                                {
-                                    "bold": True,
-                                    "fg_color": "#4F81BD",
-                                    "font_color": "white",
-                                }
-                            )
+                            header_fmt = wb.add_format({
+                                "bold": True, "fg_color": "#4F81BD", "font_color": "white"
+                            })
                             for col_num, value in enumerate(df.columns.values):
                                 ws.write(0, col_num, value, header_fmt)
                             for i, col in enumerate(df.columns):
@@ -536,9 +483,7 @@ class SheetQL:
                         else:
                             header_font = Font(bold=True, color="FFFFFF")
                             fill = PatternFill(
-                                start_color="4F81BD",
-                                end_color="4F81BD",
-                                fill_type="solid",
+                                start_color="4F81BD", end_color="4F81BD", fill_type="solid"
                             )
                             for ws in writer.book.worksheets:
                                 for cell in ws[1]:
@@ -553,7 +498,6 @@ class SheetQL:
             self.logger.error(f"Save failed: {e}")
 
     def _handle_meta_command(self, command_str: str) -> bool:
-        """Handles dot-commands."""
         parts = command_str.split()
         cmd = parts[0].lower()
 
@@ -577,16 +521,11 @@ class SheetQL:
 
         should_exit = commands[cmd]()
         if should_exit and cmd in [".exit", ".quit"] and self.results_to_save:
-            if (
-                self.console.input("Export staged results? (y/n): ")
-                .lower()
-                .startswith("y")
-            ):
+            if self.console.input("Export staged results? (y/n): ").lower().startswith("y"):
                 self._export_results()
         return should_exit
 
     def _dump_script(self, parts: List[str]) -> None:
-        """Dumps session to YAML."""
         filename = parts[1] if len(parts) > 1 else "script.yaml"
         try:
             yaml_content = self.recorder.generate_yaml()
@@ -598,15 +537,9 @@ class SheetQL:
 
     def _show_help(self) -> None:
         self.console.print("\n[bold]Commands:[/bold]")
-        self.console.print(
-            "  .help, .tables, .schema <t>, .history, .load, .rename <o> <n>, .export, .exit"
-        )
-        self.console.print(
-            "  [bold yellow].dump <file>[/bold yellow]   Save current session to YAML"
-        )
-        self.console.print(
-            "  [bold yellow].runscript <file>[/bold yellow] Run a YAML script"
-        )
+        self.console.print("  .help, .tables, .schema <t>, .history, .load, .rename <o> <n>, .export, .exit")
+        self.console.print("  [bold yellow].dump <file>[/bold yellow]   Save current session to YAML")
+        self.console.print("  [bold yellow].runscript <file>[/bold yellow] Run a YAML script")
 
     def _list_tables(self) -> None:
         if self.db_connection:
@@ -632,30 +565,16 @@ class SheetQL:
                 self.logger.error(str(e))
 
     def _rename_table(self, parts: List[str]) -> None:
-        """Renames a table view and updates the schema cache safely."""
         if len(parts) == 3:
             try:
-                old_name_input = parts[1]
-                new_name = parts[2]
-
-                # Update DB
-                self.db_connection.execute(
-                    f'ALTER VIEW "{old_name_input}" RENAME TO "{new_name}"'
-                )
-                self.logger.info(f"Renamed {old_name_input} -> {new_name}")
-
-                # Update Cache (Robust lookup for case-insensitivity)
-                actual_key = next(
-                    (
-                        k
-                        for k in self.schema_cache
-                        if k.lower() == old_name_input.lower()
-                    ),
-                    old_name_input,
-                )
-
+                old = parts[1]
+                new = parts[2]
+                self.db_connection.execute(f'ALTER VIEW "{old}" RENAME TO "{new}"')
+                self.logger.info(f"Renamed {old} -> {new}")
+                
+                actual_key = next((k for k in self.schema_cache if k.lower() == old.lower()), old)
                 if actual_key in self.schema_cache:
-                    self.schema_cache[new_name] = self.schema_cache.pop(actual_key)
+                    self.schema_cache[new] = self.schema_cache.pop(actual_key)
             except Exception as e:
                 self.logger.error(str(e))
 
@@ -676,20 +595,13 @@ class SheetQL:
             self._load_data(paths)
 
     def _export_results(self) -> None:
+        """Exports staged results using the correct save path."""
         if not self.results_to_save:
             self.logger.warning("Nothing to export.")
             return
 
-        if path := self._prompt_for_paths(
-            "Save Location", [("Excel", "*.xlsx")], False
-        ):
-            save_dest = path[0] if isinstance(path, list) else path
-            self._save_to_excel(save_dest)
-        else:
-            if not TKINTER_AVAILABLE:
-                p = self.console.input("Save Path: ")
-                if p:
-                    self._save_to_excel(p)
+        if path := self._prompt_for_save_path():
+            self._save_to_excel(path)
 
     def _run_script_interactive(self, parts: List[str]) -> None:
         script_path = parts[1] if len(parts) > 1 else None
@@ -708,26 +620,34 @@ class SheetQL:
             self.logger.error(f"Script Error: {e}")
 
     def _execute_yaml_script(self, config: Dict[str, Any]) -> None:
-        """Executes operations from YAML config."""
+        """Executes operations from YAML config using the file-map for robust aliasing."""
         if "inputs" in config:
             paths = [i["path"] for i in config["inputs"]]
-            loaded = self._load_data(paths)
-            alias_map = {
-                os.path.basename(i["path"]): i.get("alias")
-                for i in config["inputs"]
-                if i.get("alias")
-            }
+            self._load_data(paths)
+            
+            for item in config["inputs"]:
+                path = item["path"]
+                alias = item.get("alias")
+                if not alias:
+                    continue
 
-            for tbl in loaded:
-                for fname, alias in alias_map.items():
-                    if fname.split(".")[0] in tbl:
-                        try:
-                            self.db_connection.execute(
-                                f'ALTER VIEW "{tbl}" RENAME TO "{alias}"'
-                            )
-                            self.logger.info(f"Aliased {tbl} -> {alias}")
-                        except Exception:
-                            pass
+                found_tables = []
+                for loaded_path, tables in self.loaded_files_map.items():
+                    if os.path.normpath(loaded_path) == os.path.normpath(path) or \
+                       os.path.basename(loaded_path) == os.path.basename(path):
+                        found_tables = tables
+                        break
+                
+                if found_tables:
+                    if len(found_tables) == 1:
+                        self.db_connection.execute(f'ALTER VIEW "{found_tables[0]}" RENAME TO "{alias}"')
+                        self.logger.info(f"Aliased {found_tables[0]} -> {alias}")
+                    else:
+                        for tbl in found_tables:
+                            suffix = tbl.split("_", 1)[-1] if "_" in tbl else "sheet"
+                            new_name = f"{alias}_{suffix}"
+                            self.db_connection.execute(f'ALTER VIEW "{tbl}" RENAME TO "{new_name}"')
+                            self.logger.info(f"Aliased {tbl} -> {new_name}")
 
         if "tasks" in config:
             for task in config.get("tasks", []):
@@ -746,14 +666,12 @@ class SheetQL:
 def main() -> None:
     parser = argparse.ArgumentParser(description="SheetQL Professional")
     parser.add_argument("-r", "--run", dest="config_path", help="Run batch config")
-    parser.add_argument(
-        "--debug", action="store_true", help="Enable debug logging to console"
-    )
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     args = parser.parse_args()
 
     logger = setup_logging(args.debug)
-
     tool = SheetQL(logger)
+    
     if args.config_path:
         tool.run_batch(args.config_path)
     else:
