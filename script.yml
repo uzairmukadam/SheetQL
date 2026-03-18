@@ -1,0 +1,12 @@
+variables:
+  out_dir: C:/Users/uzair/Downloads
+options:
+  memory_limit: 75%
+  stop_on_error: true
+inputs:
+- path: ${out_dir}/2026_JanandFeb Workday Journal lines.xlsx
+tasks:
+- name: test
+  sql: SELECT * FROM t_2026_janandfeb_workday_journal_lines_find_journal_lines;
+export:
+  path: ${out_dir}/query_result.xlsx

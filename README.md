@@ -14,11 +14,11 @@ SheetQL is a powerful command-line tool that transforms your local data files (E
 * **Interactive SQL Console**: Run standard SQL queries in a live, multi-line terminal session with command history.
 * **Live Session Introspection**: Check table structures with the `.schema` command and review past queries with `.history`.
 * **Dynamic File Loading**: Load additional files into your session at any time with the `.load` command without restarting.
-* **Interactive SQL Console**: Run standard SQL queries in a live, interactive terminal session.
 * **GUI & CLI File Selection**: Uses a graphical file picker if available, but gracefully falls back to a command-line interface on headless systems.
 * **Custom Table Names**: Rename the default long table names to shorter, more convenient aliases using the `.rename` command.
 * **Professional Excel Reports**: Save multiple query results to a single, beautifully formatted Excel file with styled headers, auto-fitted columns, and filters.
 * **Fast & Efficient**: Leverages the high-performance DuckDB analytical engine for near-instant query results.
+* **Per-Task Exports (YAML)**: Export each query to its own destination (`.xlsx`, `.csv`, `.json`) while still supporting a single combined Excel export.
 
 ---
 
@@ -69,6 +69,18 @@ pip install -r requirements.txt
 
 **Note**: If you are on a restricted system where you cannot install high-performance packages (like `calamine` or `prompt_toolkit`), the tool will automatically fallback to standard libraries (`pandas`/`openpyxl`) to ensure functionality.
 
+### 4. (Recommended) Install as a CLI tool
+
+SheetQL is now an installable package with a `sheetql` command.
+
+```bash
+# From the repository root
+pip install -e .
+
+# Optional extras:
+# pip install -e ".[ui,perf,batch]"
+```
+
 ## ▶️ How to Run
 
 ### Interactive Mode
@@ -76,6 +88,9 @@ pip install -r requirements.txt
 Launch the tool to explore data, run queries, and build reports interactively.
 
 ```bash
+sheetql interactive
+
+# Legacy entrypoint (still supported)
 python sheet_ql.py
 ```
 
@@ -84,7 +99,28 @@ python sheet_ql.py
 Execute a saved pipeline script non-interactively. Perfect for scheduled tasks or "End of Month" reporting.
 
 ```bash
+sheetql run -c monthly_report.yml
+
+# Legacy entrypoint (still supported)
 python sheet_ql.py --run monthly_report.yml
+```
+
+### One-off Query Mode (Non-interactive)
+
+Run a single query against one or more input files and print or export the result.
+
+```bash
+sheetql query -i data.xlsx -q "SELECT * FROM my_table LIMIT 10" --format json
+sheetql query -i data.csv -f query.sql -o out/result.xlsx --sheet-name Result
+```
+
+### Inspect Mode
+
+List inferred tables (and optionally columns) without starting the interactive shell.
+
+```bash
+sheetql inspect -i data.xlsx --schema
+sheetql inspect -i data.csv --format json
 ```
 
 ## 📖 Usage Instructions
@@ -117,6 +153,16 @@ Instead of a SQL query, you can type special commands (starting with a dot):
 * `.history`: Display previous queries.
 * `.exit` or `.quit`: Exits the application (prompts to save first).
 
+### Table naming and aliases
+
+When you load files or define aliases, SheetQL automatically **normalizes** names into safe SQL identifiers that DuckDB accepts:
+
+* All names are lowercased and non-alphanumeric characters are replaced with `_`.
+* Leading/trailing/multiple underscores are collapsed.
+* If a name would start with a digit (e.g. a filename like `2026_report.xlsx`), SheetQL prefixes it with `t_` so it becomes a valid identifier, e.g. `t_2026_report_xlsx`.
+
+This makes scripts more robust (no \"view does not exist\" errors from numeric-leading names), while keeping the mapping deterministic so you can predict table names from filenames and aliases.
+
 ### Step 4: Rerun from History
 
 Made a mistake? Press Up Arrow to edit, or use history expansion:
@@ -137,9 +183,16 @@ You no longer need to write YAML scripts by hand.
 
 SheetQL will generate a production-ready script file for you:
 
-**Generated `my_pipeline.yml`**:
+**Generated `my_pipeline.yml` (example)**:
 
 ```
+options:
+  memory_limit: "75%"
+  stop_on_error: true
+
+variables:
+  out_dir: "C:/Reports"
+
 inputs:
   - path: "C:/Data/raw_sales.csv"
     alias: "sales_raw"
@@ -153,12 +206,23 @@ tasks:
       FROM sales_raw s 
       JOIN targets t ON s.Region = t.City
       WHERE s.Amount > t.Goal
+    export:
+      path: "${out_dir}/Q1_Performance.csv"
+
+  - name: "Summary"
+    sql: >
+      SELECT COUNT(*) AS n_rows FROM sales_raw
 
 export:
-  path: "C:/Reports/Q1_Summary.xlsx"
+  path: "${out_dir}/Q1_Summary.xlsx"
 ```
 
-To run this next month, simply execute: `python sheet_ql.py --run my_pipeline.yml`
+To run this next month, simply execute: `sheetql run -c my_pipeline.yml`
+
+### YAML tips for fast iteration
+
+* **Change sources quickly** with `variables` and `${var}` substitution in both `inputs[].path` and `tasks[].sql`.
+* **Export each task separately** by adding `tasks[].export.path`.\n+  Supported formats by extension: `.xlsx`, `.csv`, `.json`.\n+  For `.xlsx`, you can also set `tasks[].export.sheet`.\n+* **Combined Excel export still works** using the top-level `export.path`.\n+  Any task **without** `tasks[].export` is staged and included there.
 
 ## 💡 Troubleshooting
 
@@ -175,7 +239,7 @@ Contributions are welcome! If you have ideas for new features, bug fixes, or imp
 ## 🚀 Future Features
 
 * **Persistent Sessions**: Save and load your entire session, including loaded tables and renames, so you can pick up where you left off.
-* **Additional Export Formats**: Support for exporting query results to CSV, JSON, and Markdown.
+* **Additional Export Formats**: Add Markdown/HTML exports and template-based reporting.
 * **Basic Charting**: A command to generate simple text-based charts in the terminal or save graphical charts to an image file.
 
 ## 📄 License

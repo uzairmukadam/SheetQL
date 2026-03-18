@@ -4,11 +4,26 @@ import sys
 import shutil
 import logging
 import pandas as pd
-import yaml
 from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from sheet_ql import SheetQL
+
+try:
+    from sheet_ql import SheetQL
+    ENGINE_AVAILABLE = True
+except ModuleNotFoundError as e:
+    # Allow running validation-only tests in minimal environments.
+    ENGINE_AVAILABLE = False
+    _engine_import_error = e
+
+from sheetql.scripting import parse_script_config, ScriptConfigError
+from sheetql.naming import normalize_name
+
+try:
+    import yaml  # type: ignore
+    YAML_AVAILABLE = True
+except ImportError:
+    YAML_AVAILABLE = False
 
 
 class TestSheetQL(unittest.TestCase):
@@ -19,6 +34,8 @@ class TestSheetQL(unittest.TestCase):
 
     def setUp(self):
         """Initializes the test environment with sandbox directory and dummy files."""
+        if not ENGINE_AVAILABLE:
+            self.skipTest(f"Engine dependencies missing: {_engine_import_error}")
         self.test_dir = "test_env_sandbox"
         os.makedirs(self.test_dir, exist_ok=True)
 
@@ -131,6 +148,8 @@ class TestSheetQL(unittest.TestCase):
 
     def test_05_yaml_script_generation(self):
         """Verifies that the .dump command produces valid YAML."""
+        if not YAML_AVAILABLE:
+            self.skipTest("PyYAML not installed")
         self.tool.recorder.record_load("data.csv", "raw_data")
         self.tool.recorder.record_query("clean_data", "SELECT * FROM raw_data")
 
@@ -142,6 +161,8 @@ class TestSheetQL(unittest.TestCase):
 
     def test_06_yaml_aliasing_logic(self):
         """Verifies that batch processing respects YAML aliases."""
+        if not YAML_AVAILABLE:
+            self.skipTest("PyYAML not installed")
         config = {"inputs": [{"path": self.csv_path, "alias": "revenue_data"}]}
 
         self.tool._execute_yaml_script(config)
@@ -150,6 +171,33 @@ class TestSheetQL(unittest.TestCase):
             self.tool.db_connection.execute("SHOW TABLES").fetchdf()["name"].tolist()
         )
         self.assertIn("revenue_data", tables)
+
+    def test_06b_yaml_validation_errors(self):
+        """Verifies scripting validation catches malformed configs."""
+        with self.assertRaises(ScriptConfigError):
+            parse_script_config({"inputs": "not-a-list"})
+
+    def test_06c_task_level_exports_parse(self):
+        cfg = {
+            "tasks": [
+                {"name": "t1", "sql": "select 1", "export": {"path": "out/t1.csv"}},
+                {
+                    "name": "t2",
+                    "sql": "select 2",
+                    "export": {"path": "out/t2.xlsx", "sheet": "sheet2"},
+                },
+            ]
+        }
+        _, tasks, export, _ = parse_script_config(cfg)
+        self.assertIsNone(export)
+        self.assertEqual(tasks[0].export.path, "out/t1.csv")
+        self.assertEqual(tasks[1].export.sheet, "sheet2")
+
+    def test_06d_normalize_name_numeric_leading(self):
+        """normalize_name should handle numeric-leading and weird characters."""
+        self.assertEqual(normalize_name("2026 Jan&Feb Report"), "t_2026_jan_feb_report")
+        self.assertEqual(normalize_name("__My-Table__"), "my_table")
+        self.assertEqual(normalize_name("   123"), "t_123")
 
     @patch("sheet_ql.SheetQL._export_results")
     def test_07_exit_with_staging_prompt(self, mock_export):
