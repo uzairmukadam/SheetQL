@@ -1,6 +1,6 @@
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -32,11 +32,8 @@ class ScriptExport:
 class ScriptOptions:
     memory_limit: Optional[str] = None
     stop_on_error: bool = False
-    variables: Dict[str, str] = None  # type: ignore[assignment]
-
-    def __post_init__(self) -> None:
-        if self.variables is None:
-            object.__setattr__(self, "variables", {})
+    # Use field(default_factory=dict) — the correct dataclasses idiom for mutable defaults.
+    variables: Dict[str, str] = field(default_factory=dict)
 
 
 def _as_dict(config: Any) -> Dict[str, Any]:
@@ -62,12 +59,15 @@ def _ensure_dict(value: Any, key: str) -> Dict[str, Any]:
 
 
 def _substitute_vars(text: str, variables: Dict[str, str]) -> str:
-    if not variables:
-        return text
-
+    """
+    Replace ${VAR} placeholders. Resolution order:
+    1. `variables` dict (from YAML `variables:` block)
+    2. `os.environ` (environment variables — enables ${HOME}, ${USERPROFILE}, etc.)
+    3. Leave the placeholder unchanged if not found in either.
+    """
     def repl(match: re.Match[str]) -> str:
         name = match.group(1)
-        return str(variables.get(name, match.group(0)))
+        return str(variables.get(name) or os.environ.get(name, match.group(0)))
 
     return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", repl, text)
 
@@ -151,8 +151,8 @@ def parse_script_config(
 
 def resolve_alias_targets(loaded_files_map: Dict[str, List[str]], script_path: str) -> List[str]:
     """
-    Map a configured input path to the list of DuckDB table/view names that were produced when that file was loaded.
-    Matching tries full normalized path first, then filename-only match.
+    Map a configured input path to the list of DuckDB table/view names that were produced when
+    that file was loaded. Matching tries full normalized path first, then filename-only match.
     """
     for loaded_path, tables in loaded_files_map.items():
         if os.path.normpath(loaded_path) == os.path.normpath(script_path) or os.path.basename(
@@ -171,4 +171,3 @@ __all__ = [
     "parse_script_config",
     "resolve_alias_targets",
 ]
-

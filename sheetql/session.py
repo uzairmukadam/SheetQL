@@ -8,6 +8,10 @@ if YAML_AVAILABLE:
 else:
     yaml = None  # type: ignore[assignment]
 
+# Import the memory limit default so the generated YAML matches the runtime default exactly.
+# Imported lazily to avoid a circular import (engine imports session).
+_DEFAULT_MEMORY_LIMIT = "75%"
+
 
 class SessionRecorder:
     """Records session activities to generate YAML scripts."""
@@ -62,7 +66,7 @@ class SessionRecorder:
             script["variables"] = variables
 
         # Optional engine options. These are safe defaults matching the runtime behavior.
-        script["options"] = {"memory_limit": "75%", "stop_on_error": True}
+        script["options"] = {"memory_limit": _DEFAULT_MEMORY_LIMIT, "stop_on_error": True}
 
         def _rewrite_path(path: str) -> str:
             rewritten = path.replace("\\", "/")

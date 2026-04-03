@@ -24,11 +24,13 @@ from sheetql.scripting import ScriptConfigError, ScriptExport, parse_script_conf
 
 if PROMPT_TOOLKIT_AVAILABLE:
     from prompt_toolkit import PromptSession
+    from prompt_toolkit.history import InMemoryHistory
     from prompt_toolkit.lexers import PygmentsLexer
     from pygments.lexers.sql import SqlLexer
     from prompt_toolkit.styles import Style
 else:
     PromptSession = None  # type: ignore[assignment]
+    InMemoryHistory = None  # type: ignore[assignment]
     PygmentsLexer = None  # type: ignore[assignment]
     SqlLexer = None  # type: ignore[assignment]
     Style = None  # type: ignore[assignment]
@@ -53,6 +55,7 @@ class SheetQL:
     PROMPT_CONTINUE = "  -> "
     DEFAULT_EXPORT_FILENAME = "query_result.xlsx"
     HISTORY_MAX_LEN = 50
+    DEFAULT_MEMORY_LIMIT = "75%"
 
     def __init__(self, logger: logging.Logger) -> None:
         self.logger = logger
@@ -66,8 +69,14 @@ class SheetQL:
         self.loaded_files_map: Dict[str, List[str]] = {}
 
         self.session = None
-        if PROMPT_TOOLKIT_AVAILABLE and PromptSession is not None:
-            self.session = PromptSession(history=None)
+        if PROMPT_TOOLKIT_AVAILABLE and PromptSession is not None and InMemoryHistory is not None:
+            try:
+                # InMemoryHistory enables Ctrl+R reverse-search and Up/Down navigation.
+                # Wrapped in try/except because prompt_toolkit probes the terminal at
+                # construction time and raises in non-interactive environments (e.g. tests).
+                self.session = PromptSession(history=InMemoryHistory())
+            except Exception:
+                self.session = None
 
     # --- Lifecycle / entrypoints -------------------------------------------------
 
@@ -118,7 +127,7 @@ class SheetQL:
     def _init_db(self) -> None:
         self.db_connection = duckdb.connect(database=":memory:")
         try:
-            self.db_connection.execute("SET memory_limit='75%';")
+            self.db_connection.execute(f"SET memory_limit='{self.DEFAULT_MEMORY_LIMIT}';")
         except Exception:
             self.logger.debug("DuckDB memory limit config failed. Using defaults.")
 
@@ -259,7 +268,7 @@ class SheetQL:
                             f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM read_csv_auto('{sql_safe_path}')"
                         )
                         generated_tables.append(table_name)
-                    elif ext in [".json", ".jsonl"]:
+                    elif ext in [".json", ".jsonl", ".ndjson"]:
                         table_name = f"{base}_json"
                         self.db_connection.execute(
                             f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM read_json_auto('{sql_safe_path}')"
@@ -276,12 +285,8 @@ class SheetQL:
                         with context as xls:
                             for sheet in xls.sheet_names:
                                 df = pd.read_excel(xls, sheet_name=sheet)
-                                df.columns = [
-                                    re.sub(
-                                        r"[^a-zA-Z0-9_]+", "_", str(c).strip()
-                                    ).lower()
-                                    for c in df.columns
-                                ]
+                                # Use normalize_name() consistently — same logic as filename/alias normalization.
+                                df.columns = [normalize_name(str(c)) for c in df.columns]
                                 clean_sheet = normalize_name(sheet)
 
                                 table_name = f"{base}_{clean_sheet}"
@@ -292,7 +297,7 @@ class SheetQL:
                                 self.recorder.record_load(file_path, table_name)
 
                         self.loaded_files_map[file_path] = generated_tables
-                        self._update_schema_cache(generated_tables)
+                        # Schema cache is populated by the single call at the end of _load_data.
                         continue
 
                     else:
@@ -334,20 +339,23 @@ class SheetQL:
                 else:
                     line = self.console.input(prompt_text)
 
+                # Handle history re-run (!N) before touching the buffer.
                 if line.strip().startswith("!"):
                     self._handle_history_rerun(line.strip())
+                    query_buffer = ""
+                    continue
+
+                # Handle meta-commands BEFORE appending to the buffer so that
+                # typing `.tables` mid-query does not corrupt the query buffer.
+                if line.strip().lower().startswith("."):
+                    if self._handle_meta_command(line.strip()):
+                        break
                     query_buffer = ""
                     continue
 
                 query_buffer += line + " "
             except (KeyboardInterrupt, EOFError):
                 if self._handle_meta_command(".exit"):
-                    break
-                query_buffer = ""
-                continue
-
-            if line.strip().lower().startswith("."):
-                if self._handle_meta_command(line.strip()):
                     break
                 query_buffer = ""
                 continue
@@ -426,6 +434,15 @@ class SheetQL:
 
         raise ValueError("Unsupported export extension. Use .xlsx, .csv, or .json.")
 
+    @staticmethod
+    def _calc_col_width(series: pd.Series, col_name: str, min_w: int = 8, max_w: int = 60) -> int:
+        """Calculate column width from actual content, capped between min_w and max_w."""
+        try:
+            max_data = int(series.astype(str).str.len().max()) if len(series) else 0
+        except Exception:
+            max_data = 0
+        return min(max_w, max(min_w, max_data, len(str(col_name))) + 2)
+
     def _save_to_excel(self, save_path: str) -> None:
         try:
             with self.console.status("[bold green]Saving Excel file...[/bold green]"):
@@ -447,19 +464,26 @@ class SheetQL:
                             for col_num, value in enumerate(df.columns.values):
                                 ws.write(0, col_num, value, header_fmt)
                             for i, col in enumerate(df.columns):
-                                ws.set_column(i, i, 20)
+                                ws.set_column(i, i, self._calc_col_width(df[col], col))
+                            # Dropdown filter across all header columns.
+                            ws.autofilter(0, 0, len(df), len(df.columns) - 1)
                         else:
+                            # Operate on the specific sheet — not all worksheets — to avoid
+                            # re-applying styling to previous sheets on each loop iteration.
+                            ws = writer.sheets[sheet_name]
                             header_font = Font(bold=True, color="FFFFFF")
                             fill = PatternFill(
                                 start_color="4F81BD",
                                 end_color="4F81BD",
                                 fill_type="solid",
                             )
-                            for ws in writer.book.worksheets:
-                                for cell in ws[1]:
-                                    cell.font = header_font
-                                    cell.fill = fill
-                                ws.auto_filter.ref = ws.dimensions
+                            for cell in ws[1]:
+                                cell.font = header_font
+                                cell.fill = fill
+                            for i, col in enumerate(df.columns):
+                                col_letter = ws.cell(row=1, column=i + 1).column_letter
+                                ws.column_dimensions[col_letter].width = self._calc_col_width(df[col], col)
+                            ws.auto_filter.ref = ws.dimensions
 
             self.logger.info(f"Saved to '{os.path.basename(save_path)}' ({engine})")
             self.recorder.record_export(save_path)
@@ -561,14 +585,39 @@ class SheetQL:
                 old = parts[1]
                 new_raw = parts[2]
                 new = normalize_name(new_raw)
-                self.db_connection.execute(f'ALTER VIEW "{old}" RENAME TO "{new}"')
+
+                # Detect whether the object is a VIEW or a registered DataFrame (BASE TABLE)
+                # so we issue the correct DDL. ALTER VIEW fails on registered DataFrames and
+                # ALTER TABLE fails on views.
+                try:
+                    type_df = self.db_connection.execute(
+                        "SELECT table_type FROM information_schema.tables WHERE table_name = ?",
+                        [old],
+                    ).fetchdf()
+                    obj_type = type_df.iloc[0]["table_type"] if not type_df.empty else "VIEW"
+                except Exception:
+                    obj_type = "VIEW"  # safe fallback
+
+                if obj_type == "VIEW":
+                    self.db_connection.execute(f'ALTER VIEW "{old}" RENAME TO "{new}"')
+                else:
+                    self.db_connection.execute(f'ALTER TABLE "{old}" RENAME TO "{new}"')
+
                 self.logger.info(f"Renamed {old} -> {new}")
 
+                # Update schema cache.
                 actual_key = next(
                     (k for k in self.schema_cache if k.lower() == old.lower()), old
                 )
                 if actual_key in self.schema_cache:
                     self.schema_cache[new] = self.schema_cache.pop(actual_key)
+
+                # Update loaded_files_map so YAML alias resolution stays consistent.
+                for file_path, tables in self.loaded_files_map.items():
+                    self.loaded_files_map[file_path] = [
+                        new if t == old else t for t in tables
+                    ]
+
             except Exception as e:
                 self.logger.error(str(e))
 

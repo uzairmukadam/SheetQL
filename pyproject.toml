@@ -4,31 +4,28 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sheetql"
-version = "0.1.0"
+version = "4.0.0"
 description = "SheetQL Professional Data Analysis & ETL Tool"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
 dependencies = [
   "pandas>=2.0.0",
-  "duckdb>=0.9.0",
+  "duckdb>=1.0.0",
   "rich>=13.0.0",
   "openpyxl>=3.1.0",
 ]
 
 [project.optional-dependencies]
-ui = ["prompt_toolkit>=3.0.0", "pygments>=2.15.0"]
-perf = ["python-calamine>=0.2.0", "xlsxwriter>=3.1.0"]
+ui    = ["prompt_toolkit>=3.0.0", "pygments>=2.15.0"]
+perf  = ["python-calamine>=0.2.0", "xlsxwriter>=3.1.0"]
 batch = ["pyyaml>=6.0.0"]
-dev = ["pytest>=8.0.0"]
+all   = ["sheetql[ui,perf,batch]"]
+dev   = ["pytest>=8.0.0", "nuitka>=2.0.0"]
 
 [project.scripts]
 sheetql = "sheetql.cli:main"
 
-[tool.setuptools]
-py-modules = ["sheet_ql"]
-
 [tool.setuptools.packages.find]
-where = ["."]
+where   = ["."]
 include = ["sheetql*"]
-

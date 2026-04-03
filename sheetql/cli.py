@@ -161,6 +161,7 @@ def _cmd_query(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sheetql", description="SheetQL Professional")
+    parser.add_argument("--version", action="version", version="%(prog)s 4.0.0")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument("--log-file", default="sheetql.log", help="Log file path")
 
