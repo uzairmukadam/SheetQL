@@ -1,21 +1,36 @@
-# --- Core Dependencies (Required) ---
+# -----------------------------------------------------------------------------
+# SheetQL v4.0.0 — requirements.txt
+#
+# This file covers all dependencies for running SheetQL via sheet_ql.py
+# (Option A — no package install required).
+#
+# Install everything:
+#   pip install -r requirements.txt
+#
+# If you install SheetQL as a package (Option B), use the extras instead:
+#   pip install -e ".[all]"
+# -----------------------------------------------------------------------------
+
+# --- Core (Required) ---------------------------------------------------------
+# The SQL engine and data processing backbone. Always needed.
 pandas>=2.0.0
-duckdb>=0.9.0
+duckdb>=1.0.0
 rich>=13.0.0
 openpyxl>=3.1.0
 
-# --- User Interface & Autocomplete (Highly Recommended) ---
-# Needed for the smart dropdown menus and history navigation
+# --- UI & Autocomplete (Highly Recommended) ----------------------------------
+# Enables SQL syntax highlighting, Tab completion, Up/Down arrow history,
+# and Ctrl+R reverse-search in the interactive shell.
 prompt_toolkit>=3.0.0
 pygments>=2.15.0
 
-# --- Performance Optimizations (Optional but Recommended) ---
-# Rust-based Excel reader (10x faster loading for .xlsx)
+# --- Performance (Optional but Recommended) ----------------------------------
+# Rust-based Excel reader — significantly faster .xlsx/.xls loading.
 python-calamine>=0.2.0
 
-# Streaming Excel writer (Faster saving / lower RAM usage)
+# Streaming Excel writer — lower RAM usage and faster saves for large exports.
 xlsxwriter>=3.1.0
 
-# --- Batch Processing (Optional) ---
-# Needed if you use the --run config.yaml mode
+# --- Batch / Scripting (Optional) --------------------------------------------
+# Required for YAML script execution (--run / sheetql run).
 pyyaml>=6.0.0
