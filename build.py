@@ -18,10 +18,18 @@ Usage
 """
 
 import argparse
+import importlib.util
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+
+def _print(*args, **kwargs) -> None:
+    """print() with immediate flush so output appears even before subprocesses run."""
+    kwargs.setdefault("flush", True)
+    print(*args, **kwargs)
+
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -61,37 +69,41 @@ INCLUDE_PACKAGE_DATA = [
 
 def check_nuitka() -> None:
     """Abort with a helpful message if Nuitka is not installed."""
-    try:
-        subprocess.check_call(
-            [sys.executable, "-m", "nuitka", "--version"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        print(
-            "\n[ERROR] Nuitka is not installed.\n"
+    _print("  Checking for Nuitka ...", end=" ")
+    spec = importlib.util.find_spec("nuitka")
+    if spec is None:
+        _print("NOT FOUND\n")
+        _print(
+            "[ERROR] Nuitka is not installed.\n"
             "Install it with:\n\n"
             "    pip install nuitka\n\n"
             "Or install all dev dependencies at once:\n\n"
             "    pip install -e \".[dev]\"\n"
         )
         sys.exit(1)
+    try:
+        import nuitka  # noqa: F401 — imported for version attribute only
+        version = getattr(nuitka, "__version__", "unknown")
+    except Exception:
+        version = "unknown"
+    _print(f"found ({version})")
 
 
 def clean_dirs() -> None:
     """Remove previous build and dist artefacts."""
     for d in (BUILD_DIR, OUTPUT_DIR):
         if d.exists():
-            print(f"  Cleaning {d.relative_to(PROJECT_ROOT)} ...")
+            _print(f"  Cleaning {d.relative_to(PROJECT_ROOT)} ...")
             shutil.rmtree(d)
 
 
 def build(*, debug: bool = False, onefile: bool = True) -> None:
     """Invoke Nuitka with all flags required for SheetQL."""
-    check_nuitka()
+    _print("\nSheetQL — Nuitka build")
+    _print("=" * 40)
 
-    print("\nSheetQL — Nuitka build")
-    print("=" * 40)
+    check_nuitka()
+    _print()
     clean_dirs()
 
     cmd = [sys.executable, "-m", "nuitka"]
@@ -99,8 +111,10 @@ def build(*, debug: bool = False, onefile: bool = True) -> None:
     # --- Output mode ---------------------------------------------------------
     if onefile:
         cmd.append("--onefile")
+        _print("  Mode: single .exe (--onefile)")
     else:
         cmd.append("--standalone")
+        _print("  Mode: directory (--standalone)")
 
     # --- Windows-specific ----------------------------------------------------
     cmd += [
@@ -129,25 +143,29 @@ def build(*, debug: bool = False, onefile: bool = True) -> None:
     # --- Debug / verbosity ---------------------------------------------------
     if debug:
         cmd += ["--debug", "--verbose"]
+        _print("  Profile: debug (symbols + verbose)")
     else:
-        # Strip docstrings and asserts from release builds for a smaller binary.
         cmd += ["--python-flag=no_docstrings", "--python-flag=no_asserts"]
+        _print("  Profile: release (stripped)")
 
     # --- Entry point ---------------------------------------------------------
     cmd.append(str(ENTRY_POINT))
 
-    print("\nRunning:")
-    print("  " + " \\\n    ".join(str(c) for c in cmd))
-    print()
+    _print(f"\n  Entry point : {ENTRY_POINT.relative_to(PROJECT_ROOT)}")
+    _print(f"  Output dir  : {OUTPUT_DIR.relative_to(PROJECT_ROOT)}")
+    _print(f"  Executable  : {EXE_NAME}.exe")
+    _print("\nStarting Nuitka compilation (this may take a few minutes) ...")
+    _print("-" * 40)
 
     ret = subprocess.call(cmd)
 
+    _print("-" * 40)
     if ret != 0:
-        print(f"\n[ERROR] Nuitka exited with code {ret}.")
+        _print(f"\n[ERROR] Nuitka exited with code {ret}.")
         sys.exit(ret)
 
     exe_path = OUTPUT_DIR / (EXE_NAME + (".exe" if sys.platform == "win32" else ""))
-    print(f"\n✔  Build complete: {exe_path}")
+    _print(f"\n✔  Build complete: {exe_path}")
 
 
 # ---------------------------------------------------------------------------
