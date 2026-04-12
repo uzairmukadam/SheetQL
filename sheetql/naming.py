@@ -1,6 +1,5 @@
 import re
 
-
 _INVALID_CHARS_RE = re.compile(r"[^a-zA-Z0-9_]+")
 
 
@@ -29,4 +28,3 @@ def normalize_name(raw: str) -> str:
 
 
 __all__ = ["normalize_name"]
-

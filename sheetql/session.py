@@ -1,16 +1,13 @@
 import os
 from typing import List, Dict, Any
 
+from sheetql.constants import DEFAULT_MEMORY_LIMIT
 from sheetql.deps import YAML_AVAILABLE
 
 if YAML_AVAILABLE:
     import yaml
 else:
     yaml = None  # type: ignore[assignment]
-
-# Import the memory limit default so the generated YAML matches the runtime default exactly.
-# Imported lazily to avoid a circular import (engine imports session).
-_DEFAULT_MEMORY_LIMIT = "75%"
 
 
 class SessionRecorder:
@@ -66,7 +63,10 @@ class SessionRecorder:
             script["variables"] = variables
 
         # Optional engine options. These are safe defaults matching the runtime behavior.
-        script["options"] = {"memory_limit": _DEFAULT_MEMORY_LIMIT, "stop_on_error": True}
+        script["options"] = {
+            "memory_limit": DEFAULT_MEMORY_LIMIT,
+            "stop_on_error": True,
+        }
 
         def _rewrite_path(path: str) -> str:
             rewritten = path.replace("\\", "/")
@@ -95,4 +95,3 @@ class SessionRecorder:
             script["export"] = {"path": _rewrite_path(export_path)}
 
         return yaml.safe_dump(script, sort_keys=False, default_flow_style=False)
-

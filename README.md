@@ -1,33 +1,46 @@
 # SheetQL
 
-> **Query your local data files with SQL. Instantly.**
+**SheetQL** is a small, focused tool for **quick analytics on flat files** like CSV, Excel, Parquet, and JSON using **full SQL** in the terminal. There is no database server, no ETL platform, and no spreadsheet GUI: you point SheetQL at files, get **DuckDB** tables and views, run queries, optionally stage results, and export to Excel or other formats.
 
-SheetQL is a command-line tool powered by [DuckDB](https://duckdb.org/) that turns Excel, CSV, JSON, and Parquet files into queryable database tables — no server, no setup, no import wizards. Run SQL directly against your files, join across them, and export polished reports.
+It is built for analysts, engineers, and anyone who wants **ad-hoc questions answered fast** on local data without standing up heavier tooling.
+
+---
+
+## What makes SheetQL different
+
+| Specialty | What it means for you |
+|-----------|-------------------------|
+| **DuckDB in-process** | SQL runs inside your Python process: fast, local, no server to install or secure. |
+| **Zero-copy paths** | Parquet, CSV, and JSON are exposed as **views** where possible so DuckDB can scan them efficiently without loading everything into RAM first. |
+| **Excel without a server** | `.xlsx` / `.xls` are read (optionally via a fast Rust reader), normalized, and **registered** as tables so you can join them with CSV/Parquet in one session. |
+| **One interactive loop** | Pick files (or paths), run SQL ended with **`;`**, see a Rich preview table, optional **staging** for a multi-sheet Excel export, and **meta-commands** for common chores. |
+| **CLI for scripts** | `sheetql query`, `inspect`, and `run` fit into shell scripts, CI, and notebooks-style one-offs. |
+| **YAML replay** | Describe inputs, SQL tasks, and exports in YAML; run the same pipeline later. **`.dump`** can generate YAML from what you did interactively. |
+| **Sensible guardrails** | Identifiers used in `DESCRIBE` / DDL are **quoted safely**; YAML `memory_limit` values are **validated** before being sent to DuckDB. |
 
 ---
 
 ## Features
 
-- **Query any local file** — Excel (`.xlsx`, `.xls`), CSV, JSON (`.json`, `.jsonl`, `.ndjson`), and Parquet
-- **Full SQL** via DuckDB — aggregations, window functions, CTEs, multi-file JOINs
-- **Interactive shell** with SQL syntax highlighting, Tab autocomplete, Ctrl+R history search
-- **One-off query mode** — pipe results to stdout as table/CSV/JSON, or write directly to a file
-- **YAML automation** — define pipelines with variables, multi-step tasks, and per-task exports; replay them on demand
-- **Session recording** — explore interactively, then `.dump` your session to a ready-to-run YAML script
-- **Professional Excel output** — auto-fitted column widths, styled headers, and dropdown filters on every export
-- **Persistent logs** — each run appends to `sheetql.log` with a timestamped session separator
-- **Nuitka-ready** — compile to a standalone `.exe` with `python build.py`
+- **Interactive SQL shell** — Multiline queries (wait for `;`), Rich result tables, execution time on each run, optional staging → **`.export`** to one styled `.xlsx`.
+- **Completions while you type** — With the `ui` extra: SQL highlighting, **Tab** completion, suggestions from history (**→** to accept when shown). **↑ / ↓** move through prior lines (incremental Ctrl+R search is disabled so completions can stay on while typing).
+- **Meta-commands** — `.peek`, `.count`, `.files`, `.cwd`, `.clear`, plus tables/schema/load/rename/export/dump/runscript/history/exit (see below).
+- **`sheetql query`** — Load files, run one SQL statement, optional **`--limit`** pushed into the engine for `SELECT`/`WITH`, stdout as table / CSV / JSON or **`-o`** file.
+- **`sheetql inspect`** — See which DuckDB table names a file produces, optionally with columns (or JSON for tooling).
+- **`sheetql run`** — Execute a validated YAML pipeline (inputs, tasks, per-task exports, final Excel).
+- **Session recording** — Stage results interactively, then **`.dump`** to emit a runnable YAML script.
+- **Logging** — Append-only **`sheetql.log`** with a clear session header each run.
+- **Optional native build** — **`python build.py`** (Nuitka) for a standalone Windows executable.
 
 ---
 
 ## Installation
 
-**Requirements:** Python 3.9+
+**Python 3.9+**
 
 ```bash
 git clone https://github.com/uzairmukadam/sheetql.git
 cd sheetql
-
 python -m venv .venv
 # Windows:
 .venv\Scripts\activate
@@ -35,438 +48,233 @@ python -m venv .venv
 source .venv/bin/activate
 ```
 
-There are two ways to run SheetQL. Choose whichever fits your workflow:
-
-### Option A — Run directly (no install required)
-
-Install dependencies from `requirements.txt` and run `sheet_ql.py` directly. This is the simplest route — no package installation needed.
+### Option A — Run without installing the package
 
 ```bash
 pip install -r requirements.txt
 python sheet_ql.py
 ```
 
-> `sheet_ql.py` supports interactive mode and batch mode (`--run`). For the full subcommand CLI (`query`, `inspect`) use Option B.
+`sheet_ql.py` supports **interactive** mode and **`--run` / `-r`** for a YAML file. For subcommands **`query`**, **`inspect`**, **`run`**, install the package (Option B).
 
-### Option B — Install as a CLI package
-
-Install SheetQL as a proper Python package. This registers the `sheetql` command and unlocks all subcommands.
+### Option B — Install the `sheetql` CLI
 
 ```bash
-# Core install:
 pip install -e .
-
-# Recommended — all optional engines (autocomplete, Rust Excel reader, YAML scripting):
+# Recommended optional stacks:
 pip install -e ".[all]"
 ```
 
-### Optional extras
-
-| Extra | What it adds | Install |
-|---|---|---|
-| `ui` | SQL syntax highlighting + Tab autocomplete + Ctrl+R history | `pip install -e ".[ui]"` |
-| `perf` | Rust-based Excel reader (much faster loading) + streaming Excel writer | `pip install -e ".[perf]"` |
-| `batch` | YAML script execution | `pip install -e ".[batch]"` |
-| `all` | All of the above | `pip install -e ".[all]"` |
-| `dev` | pytest + Nuitka | `pip install -e ".[dev]"` |
+| Extra | Purpose |
+|-------|---------|
+| `ui` | `prompt_toolkit` + Pygments: highlighting, completions, history UI |
+| `perf` | Faster Excel read (`python-calamine`) + streaming Excel write (`xlsxwriter`) |
+| `batch` | PyYAML for scripts and `.dump` / `run` |
+| `all` | `ui` + `perf` + `batch` |
+| `dev` | Tests + Nuitka (`pip install -e ".[dev]"`) |
 
 ---
 
-## Quick Start
+## Quick start
 
-**Option A — using `sheet_ql.py` directly:**
 ```bash
-# Interactive shell
-python sheet_ql.py
-
-# Run a YAML pipeline
-python sheet_ql.py --run monthly_report.yml
-
-# Enable debug logging
-python sheet_ql.py --debug
-```
-
-**Option B — using the installed `sheetql` CLI:**
-```bash
-# Interactive shell
+# Interactive (default when no subcommand is given)
+sheetql
+# or explicitly:
 sheetql interactive
 
-# One-off query — print results to terminal
-sheetql query -i sales.csv -q "SELECT region, SUM(amount) AS total FROM sales_csv GROUP BY region"
+# One-off query to the terminal
+sheetql query -i sales.csv -q "SELECT sales_rep, SUM(amount) FROM sales_csv GROUP BY 1"
 
-# One-off query — write results to Excel
-sheetql query -i sales.csv -q "SELECT * FROM sales_csv LIMIT 100" -o report.xlsx
+# Inspect table names (and columns) for a file
+sheetql inspect -i report.xlsx --schema
 
-# Inspect what tables a file produces, with column names
-sheetql inspect -i data.xlsx --schema
+# Run a saved pipeline
+sheetql run -c pipeline.yml
 
-# Run a saved YAML pipeline
-sheetql run -c monthly_report.yml
-
-# Version / help
-sheetql --version
-sheetql --help
+# Legacy entry (same interactive + batch -r as above)
+python sheet_ql.py
+python sheet_ql.py -r pipeline.yml
 ```
 
 ---
 
-## Interactive Mode
+## Using the interactive shell
 
-Start the interactive shell:
-
-```bash
-# Option A — run directly (no install)
-python sheet_ql.py
-
-# Option B — installed CLI
-sheetql interactive
-```
-
-A file picker dialog opens (or a path prompt on headless systems). After selecting files, SheetQL loads them and drops into the SQL prompt.
-
-### Writing queries
-
-Queries are terminated with a semicolon. Multi-line input is supported — keep typing and press Enter; SheetQL waits for the `;` before executing.
-
-```
-SQL> SELECT product, SUM(revenue) AS total
-  -> FROM sales_csv
-  -> GROUP BY product
-  -> ORDER BY total DESC;
-```
-
-Results are shown in a formatted table (up to 15 rows previewed). You are then asked whether to **stage** the result for export.
-
-### Tab autocomplete & history
-
-If `prompt_toolkit` is installed (via `[ui]` extra):
-
-- **Tab** — autocomplete SQL keywords, table names, and column names
-- **Up / Down arrows** — navigate previous queries
-- **Ctrl+R** — reverse-search through session history
-
-### History re-run
-
-```
-SQL> .history        # show numbered query history
-SQL> !3              # re-run query #3
-```
+1. Start SheetQL; choose files in the dialog (or enter paths if there is no GUI).
+2. Tables appear with auto-generated names (see **Table naming** below).
+3. Type SQL; end each statement with **`;`**. Continuation lines use the **`->`** prompt.
+4. After a **SELECT**-style result, you may **stage** it for a named sheet in a later **`.export`**.
+5. Use **meta-commands** (they start with `.` and are handled before the SQL buffer).
 
 ### Meta-commands
 
-Type these at the `SQL>` prompt instead of a query:
+| Command | Purpose |
+|---------|---------|
+| `.help` | Full list with short descriptions |
+| `.tables` | List DuckDB tables |
+| `.files` | Files you opened → table names created from each |
+| `.peek <table> [n]` | First **n** rows (`SELECT * … LIMIT n`), default **15**; no staging prompt |
+| `.count <table>` | Row count + timing |
+| `.schema <table>` | Column names and types |
+| `.history` | Numbered history; **`!n`** re-runs query *n* |
+| `.load` | Add more files in-session |
+| `.rename <old> <new>` | Rename a table or view (Excel tables use the correct DDL) |
+| `.export` | Write all staged sheets to one `.xlsx` |
+| `.dump [file]` | Write session YAML (default `script.yaml`) |
+| `.runscript <file>` | Run a YAML script inside the current session |
+| `.cwd` | Show working directory (helpful for paths) |
+| `.clear` | Clear the terminal |
+| `.exit` / `.quit` | Leave (offers export if something is staged) |
 
-| Command | Description |
-|---|---|
-| `.tables` | List all loaded tables |
-| `.schema <table>` | Show columns and data types for a table |
-| `.load` | Add more files to the current session without restarting |
-| `.rename <old> <new>` | Rename a table to a shorter alias |
-| `.export` | Save all staged results to a formatted Excel file |
-| `.dump <file.yml>` | Save the current session as a reusable YAML script |
-| `.runscript <file.yml>` | Execute a YAML script inside the current session |
-| `.history` | Show previous queries |
-| `.exit` / `.quit` | Exit (prompts to export staged results first) |
-
-### Staging and exporting results
-
-After each successful query you are prompted:
-
-```
-Stage for export? (y/n): y
-Sheet name: Q1_Summary
-Staged 'Q1_Summary'
-```
-
-Stage as many results as you like under different sheet names, then:
-
-```
-SQL> .export
-```
-
-This saves all staged results to a single `.xlsx` file with:
-- Styled blue headers
-- Auto-fitted column widths
-- Dropdown filters on every column
+The **bottom status bar** lists a subset of these for quick reference.
 
 ### Table naming
 
-SheetQL auto-generates table names from file and sheet names:
-
-| Source | Table name |
-|---|---|
+| Source | Example table name |
+|--------|---------------------|
 | `sales_2024.csv` | `sales_2024_csv` |
-| `targets.xlsx` → sheet `Q1 Goals` | `targets_q1_goals` |
-| `2026_report.xlsx` | `t_2026_report_xlsx` *(digit-leading names get a `t_` prefix)* |
-| `My Weird File!.csv` | `my_weird_file_csv` |
+| `targets.xlsx` sheet `Q1 Goals` | `targets_q1_goals` |
+| Leading digits in basename | `t_` prefix, e.g. `t_2026_report_xlsx` |
 
-Use `.rename` to shorten these: `.rename sales_2024_csv sales`
+Use **`.rename`** for shorter aliases in long SQL.
 
 ---
 
-## One-off Query Mode
+## CLI reference
 
-Run a single query without entering the interactive shell. Useful for scripting and pipelines.
+### `sheetql query`
 
-```bash
-sheetql query -i <file(s)> -q <sql> [options]
+```text
+sheetql query -i <file> [more files...] -q "SQL" [options]
 ```
 
-**Options:**
-
-| Flag | Description |
-|---|---|
-| `-i / --input` | One or more input files (required) |
-| `-q / --query` | SQL string to execute |
-| `-f / --query-file` | Path to a `.sql` file |
-| `--alias new=old` | Rename a table before querying (repeatable) |
-| `--limit N` | Truncate result to N rows |
-| `--format table\|csv\|json` | stdout format (default: `table`) |
-| `-o / --output` | Write to `.xlsx`, `.csv`, or `.json` instead of stdout |
+| Option | Meaning |
+|--------|---------|
+| `-i` / `--input` | Input files (required) |
+| `-q` / `--query` | SQL string |
+| `-f` / `--query-file` | Read SQL from a file |
+| `--alias new=old` | Rename a relation before running SQL (repeatable) |
+| `--limit N` | For `SELECT` / `WITH`, limit is applied **inside DuckDB** when possible |
+| `--format` | `table` (default), `csv`, or `json` |
+| `-o` / `--output` | Write `.xlsx`, `.csv`, or `.json` |
 | `--sheet-name` | Sheet name when writing `.xlsx` |
 
-**Examples:**
+### `sheetql inspect`
 
 ```bash
-# Print top revenue regions as a table
-sheetql query -i sales.csv -q "SELECT region, SUM(amount) FROM sales_csv GROUP BY 1 ORDER BY 2 DESC"
-
-# Write filtered data to JSON (pipe-friendly)
-sheetql query -i data.xlsx -q "SELECT * FROM data_sheet1 WHERE status = 'active'" --format json
-
-# Load a .sql file and export to Excel
-sheetql query -i orders.csv customers.xlsx -f report.sql -o output/report.xlsx --sheet-name Orders
-
-# Rename a long auto-generated table name before querying
-sheetql query -i "2026 Jan Report.xlsx" --alias jan=t_2026_jan_report_sheet1 -q "SELECT * FROM jan"
+sheetql inspect -i data.csv
+sheetql inspect -i book.xlsx --schema
+sheetql inspect -i a.parquet --format json
 ```
 
----
-
-## Inspect Mode
-
-Check what tables and columns a file produces without running a query:
-
-```bash
-# List tables
-sheetql inspect -i data.xlsx
-
-# List tables with their columns
-sheetql inspect -i data.xlsx --schema
-
-# Output as JSON (for scripting)
-sheetql inspect -i data.xlsx --format json
-```
-
----
-
-## YAML Scripting (Automation)
-
-YAML scripts define a reproducible pipeline: which files to load, what queries to run, and where to save the results. Run them on a schedule or hand them off to colleagues.
-
-### Script structure
-
-```yaml
-# Optional: reusable variables substituted with ${VAR_NAME}
-# Falls back to environment variables if not defined here.
-variables:
-  data_dir: C:/Data
-  out_dir: C:/Reports
-
-# Engine options
-options:
-  memory_limit: "75%"   # fraction of RAM DuckDB may use
-  stop_on_error: true   # abort remaining tasks on first failure
-
-# Input files to load
-inputs:
-  - path: ${data_dir}/sales.csv
-    alias: sales          # optional: rename the auto-generated table name
-
-  - path: ${data_dir}/targets.xlsx
-    alias: targets
-
-# SQL tasks to execute
-tasks:
-  - name: Q1_Performance
-    sql: >
-      SELECT s.region, SUM(s.amount) AS revenue, t.goal
-      FROM sales s
-      JOIN targets_q1 t ON s.region = t.region
-      WHERE s.quarter = 'Q1'
-      GROUP BY s.region, t.goal
-    export:
-      path: ${out_dir}/Q1_Performance.csv   # export this task directly
-
-  - name: Summary
-    sql: SELECT COUNT(*) AS total_rows, SUM(amount) AS grand_total FROM sales
-    # no export here — this result is included in the combined Excel at the bottom
-
-# Combined Excel export (collects all tasks without their own export)
-export:
-  path: ${out_dir}/Monthly_Report.xlsx
-```
-
-### Running a script
+### `sheetql run`
 
 ```bash
 sheetql run -c monthly_report.yml
 ```
 
-### Per-task exports
+---
 
-Each task can write its result to its own file:
+## YAML pipelines
+
+Scripts bundle **inputs** (paths and optional **aliases**), **tasks** (named SQL, optional per-task **export**), optional top-level **`export`** for a combined Excel workbook, **`variables`** for `${NAME}` substitution (falling back to environment variables), and **`options`** such as `memory_limit` and `stop_on_error`.
+
+Example (abbreviated):
 
 ```yaml
+variables:
+  data_dir: ./data
+  out_dir: ./out
+
+options:
+  memory_limit: "75%"
+  stop_on_error: true
+
+inputs:
+  - path: ${data_dir}/sales.csv
+    alias: sales
+
 tasks:
-  - name: active_customers
-    sql: SELECT * FROM customers WHERE status = 'active'
+  - name: ByRegion
+    sql: SELECT region, SUM(amount) AS total FROM sales GROUP BY 1
     export:
-      path: ${out_dir}/active_customers.xlsx
-      sheet: Customers        # optional sheet name for .xlsx
+      path: ${out_dir}/by_region.csv
 
-  - name: revenue_summary
-    sql: SELECT region, SUM(revenue) FROM sales GROUP BY region
-    export:
-      path: ${out_dir}/revenue.csv
+export:
+  path: ${out_dir}/combined.xlsx
 ```
 
-Supported export formats: `.xlsx`, `.csv`, `.json`.
-
-### Variable substitution
-
-`${VAR}` placeholders are resolved in this order:
-
-1. The `variables:` block in the YAML file
-2. Environment variables (e.g. `${USERPROFILE}`, `${HOME}`, `${MY_DATA_PATH}`)
-3. Left unchanged if not found in either
-
-This makes scripts portable — colleagues can override paths via environment variables without editing the YAML.
-
-### Generate a script from an interactive session
-
-You do not need to write YAML by hand. Explore interactively, then let SheetQL generate the script:
-
-1. Start the interactive shell and load your files
-2. Run your queries and stage the good results (`y` when prompted)
-3. Run `.dump my_pipeline.yml`
-
-SheetQL writes a complete, ready-to-run script including variables, inputs, tasks, and the export path. Edit it if needed, then replay it anytime:
-
-```bash
-# Option A — run directly
-python sheet_ql.py --run my_pipeline.yml
-
-# Option B — installed CLI
-sheetql run -c my_pipeline.yml
-```
+Run: **`sheetql run -c file.yml`** or **`python sheet_ql.py -r file.yml`**.
 
 ---
 
-## Logging
+## Logging & debugging
 
-SheetQL logs to `sheetql.log` in the working directory. Each run **appends** to the file — previous sessions are preserved and separated by a timestamped header:
-
-```
-================================================================================
-  SESSION START  |  2026-04-03 18:18:00  |  INFO  |  sheetql run -c report.yml
-================================================================================
-2026-04-03 18:18:00 | INFO     | SheetQL | 🚀 Batch mode: 'report.yml'
-2026-04-03 18:18:01 | INFO     | SheetQL | ✔ Loaded 2 tables.
-...
-```
-
-Enable verbose debug output:
-
-```bash
-# Option A
-python sheet_ql.py --debug
-
-# Option B
-sheetql --debug interactive
-```
+- Default log file: **`sheetql.log`** (append mode, session separators).
+- Verbose console logging: **`--debug`** on the CLI or **`python sheet_ql.py --debug`**.
 
 ---
 
-## Building a Standalone Executable
-
-Compile SheetQL into a single `.exe` (Windows) using [Nuitka](https://nuitka.net/):
+## Building a standalone executable (Windows)
 
 ```bash
-# Install Nuitka (included in the dev extra)
 pip install -e ".[dev]"
-
-# Standard release build → dist/sheetql.exe
 python build.py
-
-# Directory build (faster startup, no extraction step)
-python build.py --no-onefile
-
-# Debug build (includes symbols, verbose output)
-python build.py --debug
 ```
 
-**Requirements:** A C compiler must be available — either MSVC (Visual Studio) or MinGW-w64. Nuitka will prompt to auto-download MinGW-w64 if neither is detected.
+Produces **`dist/sheetql.exe`** (one-file default). A C toolchain (MSVC or MinGW) is required; Nuitka can bootstrap MinGW if needed.
+
+---
+
+## Development & deployment checks
+
+From the repo root (with dev dependencies optional for Black/Ruff):
+
+```bash
+pip install -r requirements.txt   # or pip install -e ".[all]" && pip install black ruff
+python -m black --check .
+python -m ruff check .
+python -m unittest discover tests -v
+```
+
+GitHub Actions (`.github/workflows/python-app.yml`) runs **Black**, **Ruff**, and **unittest** on Python 3.9–3.11 for pushes and pull requests to **`main`**.
 
 ---
 
 ## Troubleshooting
 
-**Startup banner shows red engines**
-
-```
-Engine Status: Rust-Excel [red], Stream-Write [red], Autocomplete [red]
-```
-
-One or more optional packages are missing. Run:
-
-```bash
-# Option A
-pip install -r requirements.txt
-
-# Option B
-pip install -e ".[all]"
-```
-
-**Memory errors on large files**
-
-SheetQL uses 75% of available RAM by default. For very large files, prefer `.parquet` or `.csv` — these use DuckDB's out-of-core streaming and never load the full file into memory.
-
-You can also override the limit in a YAML script:
-
-```yaml
-options:
-  memory_limit: "4GB"
-```
-
-**`view does not exist` after loading Excel**
-
-Excel sheets are registered as in-memory tables (not views). If you see this error when using `.rename`, it has been fixed in v4.0.0 — make sure you are on the latest version.
-
-**Logs**
-
-If the tool crashes or behaves unexpectedly, check `sheetql.log`. It contains the full debug trace for every session.
+| Symptom | What to try |
+|---------|----------------|
+| Red items on the welcome “engine” line | Install optional deps: **`pip install -e ".[all]"`** or **`pip install -r requirements.txt`**. |
+| Large file memory pressure | Prefer **Parquet/CSV** for huge scans; tune **`memory_limit`** in YAML `options`. |
+| Completions not appearing while typing | Ensure **`pip install -e ".[ui]"`**; the shell intentionally trades **Ctrl+R incremental search** for **complete-while-typing** (see prompt_toolkit behavior). |
+| Unexpected errors | Inspect **`sheetql.log`** for the full traceback. |
 
 ---
 
-## Project Layout
+## Project layout
 
-```
+```text
 sheetql/
 ├── sheetql/
 │   ├── __init__.py
-│   ├── __main__.py      # python -m sheetql entry point
-│   ├── cli.py           # subcommand definitions (interactive, query, run, inspect)
-│   ├── engine.py        # core SheetQL class (loading, querying, exporting)
-│   ├── scripting.py     # YAML config parsing and validation
-│   ├── session.py       # session recorder → .dump YAML generation
-│   ├── completion.py    # Tab autocomplete provider
-│   ├── naming.py        # filename → SQL identifier normalization
-│   ├── deps.py          # optional dependency detection
-│   └── logging.py       # logging setup (append mode + session separators)
+│   ├── __main__.py          # python -m sheetql
+│   ├── cli.py               # interactive | query | inspect | run
+│   ├── engine.py            # SheetQL: load, query, export, meta-commands
+│   ├── scripting.py         # YAML parsing & validation
+│   ├── session.py           # SessionRecorder → .dump YAML
+│   ├── completion.py        # SQL completer (prompt_toolkit)
+│   ├── naming.py            # Safe SQL identifiers from paths/sheets
+│   ├── duckdb_util.py       # Identifier quoting, bulk schema, renames, pragmas
+│   ├── constants.py         # Shared defaults
+│   ├── deps.py              # Optional dependency probes
+│   └── logging.py           # Rich + file logging
 ├── tests/
-│   └── test_sheet_ql.py
-├── build.py             # Nuitka build helper
+│   ├── test_sheet_ql.py
+│   └── test_duckdb_util.py
+├── sheet_ql.py              # Legacy entry (delegates to package)
+├── build.py                 # Nuitka helper
 ├── pyproject.toml
 ├── requirements.txt
 └── README.md

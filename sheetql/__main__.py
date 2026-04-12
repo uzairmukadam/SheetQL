@@ -7,6 +7,7 @@ Usage::
     python -m sheetql --help
     python -m sheetql --version
 """
+
 import sys
 
 from sheetql.cli import main

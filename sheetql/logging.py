@@ -26,7 +26,9 @@ def _write_session_header(log_file: str, debug_mode: bool) -> None:
         pass  # non-fatal — proceed without the separator
 
 
-def setup_logging(debug_mode: bool = False, log_file: Optional[str] = "sheetql.log") -> logging.Logger:
+def setup_logging(
+    debug_mode: bool = False, log_file: Optional[str] = "sheetql.log"
+) -> logging.Logger:
     """
     Configure and return the main SheetQL logger.
 

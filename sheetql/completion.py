@@ -1,6 +1,11 @@
-from typing import Dict, List
+import re
+from typing import Dict, List, TYPE_CHECKING, Iterator
 
 from sheetql.deps import PROMPT_TOOLKIT_AVAILABLE
+
+if TYPE_CHECKING:
+    from prompt_toolkit.completion import CompleteEvent
+    from prompt_toolkit.document import Document
 
 if PROMPT_TOOLKIT_AVAILABLE:
     from prompt_toolkit.completion import Completer, Completion
@@ -14,8 +19,21 @@ else:
             pass
 
 
+# Table name after FROM / JOIN / comma in FROM list (DuckDB identifiers: letters, digits, _).
+_TABLE_PREFIX = re.compile(
+    r"(?:^|\s)"
+    r"(?:FROM|JOIN|"
+    r"(?:LEFT|RIGHT|INNER|CROSS)\s+JOIN|"
+    r"FULL\s+OUTER\s+JOIN|"
+    r"UPDATE|INTO|DESCRIBE)\s+"
+    r"([\w]*)$",
+    re.IGNORECASE,
+)
+_COMMA_TABLE = re.compile(r",\s*([\w]*)$", re.IGNORECASE)
+
+
 class SheetQLCompleter(Completer):
-    """Context-aware autocompletion provider for the interactive shell."""
+    """Context-aware autocompletion for the interactive SQL shell."""
 
     def __init__(self, schema_cache: Dict[str, List[str]]):
         self.schema_cache = schema_cache
@@ -45,36 +63,70 @@ class SheetQLCompleter(Completer):
             "EXPORT",
         ]
 
-    def get_completions(self, document, complete_event):
+    def _yield_tables(self, prefix: str) -> Iterator[Completion]:
+        """Complete DuckDB table/view names; prefix is the partial identifier (may be '')."""
+        plen = len(prefix)
+        for t in sorted(self.schema_cache.keys()):
+            if not t.lower().startswith(prefix.lower()):
+                continue
+            yield Completion(
+                t, start_position=-plen if plen else 0, display_meta="Table"
+            )
+
+    def get_completions(
+        self, document: "Document", complete_event: "CompleteEvent"
+    ) -> Iterator[Completion]:
         if not PROMPT_TOOLKIT_AVAILABLE:
             return
 
-        word = document.get_word_before_cursor(WORD=True)
+        text = document.text_before_cursor
+
+        m = _COMMA_TABLE.search(text)
+        if m:
+            prefix = m.group(1) or ""
+            yield from self._yield_tables(prefix)
+            return
+
+        m = _TABLE_PREFIX.search(text)
+        if m:
+            prefix = m.group(1) or ""
+            yield from self._yield_tables(prefix)
+            return
+
+        # SQL tokens (alnum + underscore), not "big words" — WORD=True breaks identifiers.
+        word = document.get_word_before_cursor(WORD=False)
         upper_text = document.text_before_cursor.upper()
         parts = upper_text.split()
         last_word = ""
 
         if parts:
-            if document.text_before_cursor.endswith(" ") or word == "":
+            if text.endswith(" ") or word == "":
                 last_word = parts[-1]
             elif len(parts) > 1:
                 last_word = parts[-2]
 
         tables = list(self.schema_cache.keys())
-        suggestions = []
+        suggestions: List[tuple[str, str]] = []
 
-        if last_word in ["FROM", "JOIN", "UPDATE", "INTO", "DESCRIBE"]:
-            suggestions.extend([(t, "Table") for t in tables])
+        join_like = {"FROM", "JOIN", "UPDATE", "INTO", "DESCRIBE"}
+        if last_word in join_like:
+            suggestions.extend((t, "Table") for t in tables)
+        elif word == "":
+            # Empty prefix: offering every column explodes the menu and stalls the UI.
+            suggestions.extend((k, "Keyword") for k in self.keywords)
+            suggestions.extend((t, "Table") for t in tables)
         else:
-            suggestions.extend([(k, "Keyword") for k in self.keywords])
-            suggestions.extend([(t, "Table") for t in tables])
+            suggestions.extend((k, "Keyword") for k in self.keywords)
+            suggestions.extend((t, "Table") for t in tables)
             for table_name in tables:
-                cols = self.schema_cache.get(table_name, [])
-                suggestions.extend([(c, f"Column ({table_name})") for c in cols])
+                for c in self.schema_cache.get(table_name, []):
+                    suggestions.append((c, f"Column ({table_name})"))
 
+        wl = word.lower()
         for suggestion, meta in suggestions:
-            if suggestion.lower().startswith(word.lower()):
+            if suggestion.lower().startswith(wl):
                 yield Completion(
-                    suggestion, start_position=-len(word), display_meta=meta
+                    suggestion,
+                    start_position=-len(word),
+                    display_meta=meta,
                 )
-

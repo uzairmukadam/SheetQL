@@ -10,7 +10,6 @@ Architecture:
 """
 
 import argparse
-import logging
 from sheetql.engine import SheetQL
 from sheetql.cli import main as sheetql_main
 from sheetql.logging import setup_logging

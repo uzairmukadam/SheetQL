@@ -29,3 +29,11 @@ sheetql = "sheetql.cli:main"
 [tool.setuptools.packages.find]
 where   = ["."]
 include = ["sheetql*"]
+
+[tool.black]
+line-length = 88
+target-version = ["py39"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py39"

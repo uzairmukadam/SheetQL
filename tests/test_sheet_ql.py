@@ -1,15 +1,14 @@
 import unittest
 import os
-import sys
 import shutil
 import logging
 import pandas as pd
+from rich.tree import Tree as RichTree
 from unittest.mock import patch, MagicMock
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
 try:
-    from sheet_ql import SheetQL
+    from sheetql.engine import SheetQL
+
     ENGINE_AVAILABLE = True
 except ModuleNotFoundError as e:
     # Allow running validation-only tests in minimal environments.
@@ -21,6 +20,7 @@ from sheetql.naming import normalize_name
 
 try:
     import yaml  # type: ignore
+
     YAML_AVAILABLE = True
 except ImportError:
     YAML_AVAILABLE = False
@@ -172,10 +172,28 @@ class TestSheetQL(unittest.TestCase):
         )
         self.assertIn("revenue_data", tables)
 
+    def test_06e_yaml_alias_excel_registered_table(self):
+        """YAML aliases must rename BASE TABLE (Excel) objects, not only VIEWs."""
+        if not YAML_AVAILABLE:
+            self.skipTest("PyYAML not installed")
+        config = {"inputs": [{"path": self.excel_path, "alias": "targets_alias"}]}
+        self.tool._execute_yaml_script(config)
+        tables = (
+            self.tool.db_connection.execute("SHOW TABLES").fetchdf()["name"].tolist()
+        )
+        self.assertIn("targets_alias", tables)
+
     def test_06b_yaml_validation_errors(self):
         """Verifies scripting validation catches malformed configs."""
         with self.assertRaises(ScriptConfigError):
             parse_script_config({"inputs": "not-a-list"})
+
+    def test_06f_memory_limit_rejects_unsafe_values(self):
+        """options.memory_limit must not allow string breakouts in SET ..."""
+        with self.assertRaises(ScriptConfigError):
+            parse_script_config(
+                {"options": {"memory_limit": "1GB'; ATTACH 'x'; --"}, "inputs": []}
+            )
 
     def test_06c_task_level_exports_parse(self):
         cfg = {
@@ -199,7 +217,7 @@ class TestSheetQL(unittest.TestCase):
         self.assertEqual(normalize_name("__My-Table__"), "my_table")
         self.assertEqual(normalize_name("   123"), "t_123")
 
-    @patch("sheet_ql.SheetQL._export_results")
+    @patch("sheetql.engine.SheetQL._export_results")
     def test_07_exit_with_staging_prompt(self, mock_export):
         """Verifies that quitting triggers an export prompt if data is staged."""
         self.tool.results_to_save["test_sheet"] = pd.DataFrame()
@@ -222,6 +240,37 @@ class TestSheetQL(unittest.TestCase):
         self.assertNotIn("sales_2023_csv", tables)
 
         self.assertIn("old_sales", self.tool.schema_cache)
+
+    def test_09_peek_skips_staging_prompt(self) -> None:
+        """`.peek` runs a LIMIT query without prompting to stage for export."""
+        self.tool._load_data([self.csv_path])
+        self.tool.console = MagicMock()
+        self.tool._peek_table([".peek", "sales_2023_csv", "2"])
+        self.tool.console.input.assert_not_called()
+
+    def test_10_count_table_rows(self) -> None:
+        """`.count` reports row count for a loaded table."""
+        self.tool._load_data([self.csv_path])
+        self.tool.console = MagicMock()
+        self.tool._count_table_rows([".count", "sales_2023_csv"])
+        self.tool.console.print.assert_called()
+        printed = " ".join(
+            str(call.args[0]) for call in self.tool.console.print.call_args_list
+        )
+        self.assertIn("3", printed.replace(",", ""))
+
+    def test_11_list_loaded_files(self) -> None:
+        """`.files` prints a Rich tree of loaded paths and table names."""
+        self.tool._load_data([self.csv_path])
+        self.tool.console = MagicMock()
+        self.tool._list_loaded_files()
+        self.tool.console.print.assert_called_once()
+        arg0 = self.tool.console.print.call_args[0][0]
+        self.assertIsInstance(arg0, RichTree)
+        self.assertGreater(len(arg0.children), 0)
+
+    def test_12_unknown_meta_command(self) -> None:
+        self.assertFalse(self.tool._handle_meta_command(".nosuchcommand"))
 
 
 if __name__ == "__main__":

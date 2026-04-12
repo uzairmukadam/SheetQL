@@ -1,6 +1,5 @@
 from importlib.util import find_spec
 
-
 CALAMINE_AVAILABLE = find_spec("python_calamine") is not None
 XLSXWRITER_AVAILABLE = find_spec("xlsxwriter") is not None
 
@@ -40,4 +39,3 @@ __all__ = [
     "YAML_AVAILABLE",
     "TKINTER_AVAILABLE",
 ]
-

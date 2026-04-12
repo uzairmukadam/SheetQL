@@ -8,6 +8,24 @@ class ScriptConfigError(ValueError):
     pass
 
 
+# Allowed in options.memory_limit when embedded in SET memory_limit='…' (no string breakouts).
+_MEMORY_LIMIT_SAFE = re.compile(r"^[0-9A-Za-z.%+\s_-]+$")
+
+
+def _validate_memory_limit_option(value: str) -> str:
+    v = value.strip()
+    if not v:
+        raise ScriptConfigError("options.memory_limit must not be empty or whitespace.")
+    if len(v) > 64:
+        raise ScriptConfigError("options.memory_limit must be at most 64 characters.")
+    if not _MEMORY_LIMIT_SAFE.fullmatch(v):
+        raise ScriptConfigError(
+            "options.memory_limit may only contain letters, digits, spaces, "
+            "percent, period, plus, or hyphen (no quotes or semicolons)."
+        )
+    return v
+
+
 @dataclass(frozen=True)
 class ScriptInput:
     path: str
@@ -38,7 +56,9 @@ class ScriptOptions:
 
 def _as_dict(config: Any) -> Dict[str, Any]:
     if not isinstance(config, dict):
-        raise ScriptConfigError("Script config must be a mapping/dict at the top level.")
+        raise ScriptConfigError(
+            "Script config must be a mapping/dict at the top level."
+        )
     return config
 
 
@@ -65,6 +85,7 @@ def _substitute_vars(text: str, variables: Dict[str, str]) -> str:
     2. `os.environ` (environment variables — enables ${HOME}, ${USERPROFILE}, etc.)
     3. Leave the placeholder unchanged if not found in either.
     """
+
     def repl(match: re.Match[str]) -> str:
         name = match.group(1)
         return str(variables.get(name) or os.environ.get(name, match.group(0)))
@@ -72,7 +93,9 @@ def _substitute_vars(text: str, variables: Dict[str, str]) -> str:
     return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", repl, text)
 
 
-def _parse_export_obj(raw_export: Any, key: str, variables: Dict[str, str]) -> "ScriptExport":
+def _parse_export_obj(
+    raw_export: Any, key: str, variables: Dict[str, str]
+) -> "ScriptExport":
     if not isinstance(raw_export, dict):
         raise ScriptConfigError(f"'{key}' must be a mapping/dict.")
     export_path = raw_export.get("path")
@@ -100,11 +123,17 @@ def parse_script_config(
     variables = _ensure_dict(cfg.get("variables"), "variables")
     variables_str = {str(k): str(v) for k, v in variables.items()}
 
-    stop_on_error = bool(cfg.get("stop_on_error", raw_options.get("stop_on_error", False)))
+    stop_on_error = bool(
+        cfg.get("stop_on_error", raw_options.get("stop_on_error", False))
+    )
     memory_limit = raw_options.get("memory_limit")
     memory_limit = str(memory_limit) if memory_limit is not None else None
+    if memory_limit is not None:
+        memory_limit = _validate_memory_limit_option(memory_limit)
 
-    options = ScriptOptions(memory_limit=memory_limit, stop_on_error=stop_on_error, variables=variables_str)
+    options = ScriptOptions(
+        memory_limit=memory_limit, stop_on_error=stop_on_error, variables=variables_str
+    )
 
     inputs: List[ScriptInput] = []
     for i, item in enumerate(_ensure_list(cfg.get("inputs"), "inputs")):
@@ -115,8 +144,12 @@ def parse_script_config(
             raise ScriptConfigError(f"'inputs[{i}].path' must be a non-empty string.")
         alias = item.get("alias")
         if alias is not None and not isinstance(alias, str):
-            raise ScriptConfigError(f"'inputs[{i}].alias' must be a string if provided.")
-        inputs.append(ScriptInput(path=_substitute_vars(path, options.variables), alias=alias))
+            raise ScriptConfigError(
+                f"'inputs[{i}].alias' must be a string if provided."
+            )
+        inputs.append(
+            ScriptInput(path=_substitute_vars(path, options.variables), alias=alias)
+        )
 
     tasks: List[ScriptTask] = []
     for i, item in enumerate(_ensure_list(cfg.get("tasks"), "tasks")):
@@ -149,15 +182,17 @@ def parse_script_config(
     return inputs, tasks, export, options
 
 
-def resolve_alias_targets(loaded_files_map: Dict[str, List[str]], script_path: str) -> List[str]:
+def resolve_alias_targets(
+    loaded_files_map: Dict[str, List[str]], script_path: str
+) -> List[str]:
     """
     Map a configured input path to the list of DuckDB table/view names that were produced when
     that file was loaded. Matching tries full normalized path first, then filename-only match.
     """
     for loaded_path, tables in loaded_files_map.items():
-        if os.path.normpath(loaded_path) == os.path.normpath(script_path) or os.path.basename(
-            loaded_path
-        ) == os.path.basename(script_path):
+        if os.path.normpath(loaded_path) == os.path.normpath(
+            script_path
+        ) or os.path.basename(loaded_path) == os.path.basename(script_path):
             return tables
     return []
 

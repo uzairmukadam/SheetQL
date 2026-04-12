@@ -1,16 +1,27 @@
 import os
-import re
 import logging
+import time
 from collections import deque
 from typing import Any, Optional, List, Tuple, Dict
 
 import duckdb
 import pandas as pd
 from openpyxl.styles import Font, PatternFill
-from rich.console import Console
+from rich import box
+from rich.console import Console, Group
+from rich.panel import Panel
+from rich.rule import Rule
 from rich.table import Table
+from rich.tree import Tree
 
 from sheetql.completion import SheetQLCompleter
+from sheetql.constants import DEFAULT_MEMORY_LIMIT
+from sheetql.duckdb_util import (
+    apply_performance_pragmas,
+    fetch_columns_by_table,
+    quote_duckdb_identifier,
+    rename_relation,
+)
 from sheetql.deps import (
     CALAMINE_AVAILABLE,
     PROMPT_TOOLKIT_AVAILABLE,
@@ -20,20 +31,31 @@ from sheetql.deps import (
 )
 from sheetql.session import SessionRecorder
 from sheetql.naming import normalize_name
-from sheetql.scripting import ScriptConfigError, ScriptExport, parse_script_config, resolve_alias_targets
+from sheetql.scripting import (
+    ScriptConfigError,
+    ScriptExport,
+    parse_script_config,
+    resolve_alias_targets,
+)
 
 if PROMPT_TOOLKIT_AVAILABLE:
     from prompt_toolkit import PromptSession
+    from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+    from prompt_toolkit.formatted_text import HTML
     from prompt_toolkit.history import InMemoryHistory
     from prompt_toolkit.lexers import PygmentsLexer
-    from pygments.lexers.sql import SqlLexer
+    from prompt_toolkit.shortcuts import CompleteStyle
     from prompt_toolkit.styles import Style
+    from pygments.lexers.sql import SqlLexer
 else:
     PromptSession = None  # type: ignore[assignment]
     InMemoryHistory = None  # type: ignore[assignment]
     PygmentsLexer = None  # type: ignore[assignment]
     SqlLexer = None  # type: ignore[assignment]
     Style = None  # type: ignore[assignment]
+    CompleteStyle = None  # type: ignore[assignment]
+    HTML = None  # type: ignore[assignment]
+    AutoSuggestFromHistory = None  # type: ignore[assignment]
 
 if YAML_AVAILABLE:
     import yaml
@@ -55,11 +77,11 @@ class SheetQL:
     PROMPT_CONTINUE = "  -> "
     DEFAULT_EXPORT_FILENAME = "query_result.xlsx"
     HISTORY_MAX_LEN = 50
-    DEFAULT_MEMORY_LIMIT = "75%"
+    INTERACTIVE_PREVIEW_ROWS = 15
 
     def __init__(self, logger: logging.Logger) -> None:
         self.logger = logger
-        self.console = Console()
+        self.console = Console(soft_wrap=True, highlight=False)
         self.db_connection: Optional[duckdb.DuckDBPyConnection] = None
         self.results_to_save: Dict[str, pd.DataFrame] = {}
         self.history: deque[str] = deque(maxlen=self.HISTORY_MAX_LEN)
@@ -69,12 +91,33 @@ class SheetQL:
         self.loaded_files_map: Dict[str, List[str]] = {}
 
         self.session = None
-        if PROMPT_TOOLKIT_AVAILABLE and PromptSession is not None and InMemoryHistory is not None:
+        if (
+            PROMPT_TOOLKIT_AVAILABLE
+            and PromptSession is not None
+            and InMemoryHistory is not None
+            and CompleteStyle is not None
+            and HTML is not None
+            and AutoSuggestFromHistory is not None
+        ):
             try:
-                # InMemoryHistory enables Ctrl+R reverse-search and Up/Down navigation.
-                # Wrapped in try/except because prompt_toolkit probes the terminal at
-                # construction time and raises in non-interactive environments (e.g. tests).
-                self.session = PromptSession(history=InMemoryHistory())
+                # complete_while_typing MUST stay compatible with enable_history_search:
+                # prompt_toolkit disables complete_while_typing whenever enable_history_search
+                # is True (see PromptSession._create_default_buffer). We prefer live SQL
+                # completions while typing; use ↑/↓ for history instead of Ctrl+R search.
+                self.session = PromptSession(
+                    history=InMemoryHistory(),
+                    enable_history_search=False,
+                    complete_style=CompleteStyle.COLUMN,
+                    complete_while_typing=True,
+                    auto_suggest=AutoSuggestFromHistory(),
+                    reserve_space_for_menu=8,
+                    bottom_toolbar=lambda: HTML(
+                        '<style fg="#a3a3a3">'
+                        "SheetQL — "
+                        ".help · .tables · .files · .peek · .load · .export · .dump · .exit"
+                        "</style>"
+                    ),
+                )
             except Exception:
                 self.session = None
 
@@ -127,27 +170,23 @@ class SheetQL:
     def _init_db(self) -> None:
         self.db_connection = duckdb.connect(database=":memory:")
         try:
-            self.db_connection.execute(f"SET memory_limit='{self.DEFAULT_MEMORY_LIMIT}';")
+            self.db_connection.execute(f"SET memory_limit='{DEFAULT_MEMORY_LIMIT}';")
         except Exception:
             self.logger.debug("DuckDB memory limit config failed. Using defaults.")
+        if self.db_connection:
+            apply_performance_pragmas(self.db_connection)
 
     def _update_schema_cache(self, table_names: List[str]) -> None:
-        if not self.db_connection:
+        if not self.db_connection or not table_names:
             return
-        for table in table_names:
-            try:
-                schema_df = self.db_connection.execute(f"DESCRIBE {table}").fetchdf()
-                self.schema_cache[table] = schema_df["column_name"].tolist()
-            except Exception:
-                pass
+        for table, cols in fetch_columns_by_table(
+            self.db_connection, table_names
+        ).items():
+            self.schema_cache[table] = cols
 
     # --- UI helpers --------------------------------------------------------------
 
     def _display_welcome(self) -> None:
-        self.console.print("[bold green]--- SheetQL Professional ---[/bold green]")
-        self.console.print(
-            "Commands: [yellow].help[/yellow], [yellow].load[/yellow], [yellow].dump <file>[/yellow]"
-        )
         status = []
         status.append(
             "[green]Rust-Excel[/green]"
@@ -164,17 +203,55 @@ class SheetQL:
             if PROMPT_TOOLKIT_AVAILABLE
             else "[red]Autocomplete[/red]"
         )
-        self.console.print(f"Engine Status: {', '.join(status)}")
+        body = Group(
+            "[bold]Type SQL, end statements with[/] [yellow];[/]",
+            "[dim]Quick:[/] [yellow].peek[/] [dim]table[/] [dim][n][/]  ·  [yellow].count[/] [dim]table[/]  ·  [yellow].files[/]",
+            "[dim]Meta:[/] [yellow].help[/]  [yellow].tables[/]  [yellow].load[/]  [yellow].dump[/] [dim]<file>[/]",
+            f"[dim]Engine:[/] {', '.join(status)}",
+        )
+        self.console.print(
+            Panel.fit(
+                body,
+                title="[bold green]SheetQL[/]",
+                border_style="green",
+            )
+        )
 
-    def _display_results_table(self, df: pd.DataFrame) -> None:
-        table = Table(show_header=True, header_style="bold magenta")
+    def _display_results_table(
+        self,
+        df: pd.DataFrame,
+        *,
+        title: Optional[str] = None,
+        preview_rows: Optional[int] = None,
+        col_max_width: int = 48,
+    ) -> None:
+        row_count = len(df)
+        limit = (
+            preview_rows if preview_rows is not None else self.INTERACTIVE_PREVIEW_ROWS
+        )
+        shown = min(limit, row_count) if row_count else 0
+        table = Table(
+            show_header=True,
+            header_style="bold magenta",
+            box=box.ROUNDED,
+            show_edge=True,
+            title=title,
+            expand=False,
+        )
         for col in df.columns:
-            table.add_column(str(col))
-        for _, row in df.head(15).iterrows():
-            table.add_row(*[str(x) for x in row])
+            table.add_column(str(col), overflow="ellipsis", max_width=col_max_width)
+        if shown > 0:
+            preview = df.head(shown).fillna("").astype(str)
+            for row in preview.values:
+                table.add_row(*row.tolist())
+        caption_parts = [
+            f"{row_count:,} row(s)",
+            f"{len(df.columns)} column(s)",
+        ]
+        if row_count > shown:
+            caption_parts.append(f"showing first {shown:,}")
+        table.caption = " · ".join(caption_parts)
         self.console.print(table)
-        if len(df) > 15:
-            self.console.print(f"... ({len(df)-15} more rows)")
 
     # --- Path / file prompts -----------------------------------------------------
 
@@ -191,8 +268,17 @@ class SheetQL:
             root.destroy()
             return list(paths) if paths and paths[0] else None
 
-        self.console.print(f"\n[cyan]Enter paths for: {title}[/cyan]")
-        paths_input = self.console.input("[bold]Path(s): [/bold]")
+        self.console.print(
+            Panel(
+                f"[bold]{title}[/]\n"
+                "[dim]Comma-separated paths, or one path per line. "
+                "Quotes around paths are stripped.[/]",
+                title="[cyan]Paths[/]",
+                border_style="cyan",
+                expand=False,
+            )
+        )
+        paths_input = self.console.input("[bold cyan]Path(s):[/] ")
         raw_paths = [p.strip().strip("'\"") for p in paths_input.split(",")]
         return [p for p in raw_paths if p and os.path.exists(p)]
 
@@ -214,9 +300,17 @@ class SheetQL:
             root.destroy()
             return save_path if save_path else None
 
-        self.console.print("\n[cyan]Please enter a save path for the export.[/cyan]")
+        self.console.print(
+            Panel(
+                "[bold]Export destination[/]\n"
+                "[dim]File path for the Excel workbook (.xlsx).[/]",
+                title="[cyan]Save[/]",
+                border_style="cyan",
+                expand=False,
+            )
+        )
         save_path_input = self.console.input(
-            f"[bold]Save path (default: {self.DEFAULT_EXPORT_FILENAME}): [/bold]"
+            f"[bold cyan]Save path[/] [dim](default: {self.DEFAULT_EXPORT_FILENAME})[/]: "
         )
         if not save_path_input:
             save_path_input = self.DEFAULT_EXPORT_FILENAME
@@ -259,19 +353,22 @@ class SheetQL:
                     if ext == ".parquet":
                         table_name = f"{base}_parquet"
                         self.db_connection.execute(
-                            f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM '{sql_safe_path}'"
+                            f"CREATE OR REPLACE VIEW {quote_duckdb_identifier(table_name)} "
+                            f"AS SELECT * FROM '{sql_safe_path}'"
                         )
                         generated_tables.append(table_name)
                     elif ext == ".csv":
                         table_name = f"{base}_csv"
                         self.db_connection.execute(
-                            f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM read_csv_auto('{sql_safe_path}')"
+                            f"CREATE OR REPLACE VIEW {quote_duckdb_identifier(table_name)} "
+                            f"AS SELECT * FROM read_csv_auto('{sql_safe_path}')"
                         )
                         generated_tables.append(table_name)
                     elif ext in [".json", ".jsonl", ".ndjson"]:
                         table_name = f"{base}_json"
                         self.db_connection.execute(
-                            f"CREATE OR REPLACE VIEW {table_name} AS SELECT * FROM read_json_auto('{sql_safe_path}')"
+                            f"CREATE OR REPLACE VIEW {quote_duckdb_identifier(table_name)} "
+                            f"AS SELECT * FROM read_json_auto('{sql_safe_path}')"
                         )
                         generated_tables.append(table_name)
 
@@ -284,9 +381,25 @@ class SheetQL:
 
                         with context as xls:
                             for sheet in xls.sheet_names:
-                                df = pd.read_excel(xls, sheet_name=sheet)
+                                if CALAMINE_AVAILABLE:
+                                    df = pd.read_excel(
+                                        xls, sheet_name=sheet, engine="calamine"
+                                    )
+                                elif ext == ".xlsx":
+                                    try:
+                                        df = pd.read_excel(
+                                            xls,
+                                            sheet_name=sheet,
+                                            engine_kwargs={"read_only": True},
+                                        )
+                                    except Exception:
+                                        df = pd.read_excel(xls, sheet_name=sheet)
+                                else:
+                                    df = pd.read_excel(xls, sheet_name=sheet)
                                 # Use normalize_name() consistently — same logic as filename/alias normalization.
-                                df.columns = [normalize_name(str(c)) for c in df.columns]
+                                df.columns = [
+                                    normalize_name(str(c)) for c in df.columns
+                                ]
                                 clean_sheet = normalize_name(sheet)
 
                                 table_name = f"{base}_{clean_sheet}"
@@ -321,20 +434,44 @@ class SheetQL:
 
     def _run_interactive_loop(self) -> None:
         query_buffer = ""
-        completer = (
-            SheetQLCompleter(self.schema_cache) if PROMPT_TOOLKIT_AVAILABLE else None
+        style = (
+            Style.from_dict(
+                {
+                    "prompt": "ansicyan bold",
+                    "completion-menu": "bg:ansiblack ansigray",
+                    "completion-menu.completion": "bg:ansiblack ansigray",
+                    # prompt_toolkit only accepts a subset of ANSI names; avoid
+                    # ansibrightwhite (raises ValueError on some versions).
+                    "completion-menu.completion.current": "bg:ansiblue bold #ffffff",
+                }
+            )
+            if Style
+            else None
         )
-        style = Style.from_dict({"prompt": "ansicyan bold"}) if Style else None
 
         while True:
+            completer = (
+                SheetQLCompleter(self.schema_cache)
+                if PROMPT_TOOLKIT_AVAILABLE
+                else None
+            )
             prompt_text = self.PROMPT_SQL if not query_buffer else self.PROMPT_CONTINUE
             try:
-                if PROMPT_TOOLKIT_AVAILABLE and self.session and PygmentsLexer and SqlLexer and style:
+                if (
+                    PROMPT_TOOLKIT_AVAILABLE
+                    and self.session
+                    and PygmentsLexer
+                    and SqlLexer
+                    and style
+                ):
                     line = self.session.prompt(
                         prompt_text,
                         completer=completer,
                         lexer=PygmentsLexer(SqlLexer),
                         style=style,
+                        # Reinforce flags each line (session persists across prompts).
+                        enable_history_search=False,
+                        complete_while_typing=True,
                     )
                 else:
                     line = self.console.input(prompt_text)
@@ -363,28 +500,65 @@ class SheetQL:
             if query_buffer.strip().endswith(";"):
                 query_to_run = query_buffer.strip()
                 self.history.append(query_to_run)
-                self._execute_query(query_to_run)
+                try:
+                    if (
+                        self.session is not None
+                        and hasattr(self.session, "history")
+                        and hasattr(self.session.history, "append_string")
+                    ):
+                        self.session.history.append_string(query_to_run)
+                except Exception:
+                    self.logger.debug(
+                        "Could not append SQL to prompt history", exc_info=True
+                    )
+                self._execute_query(query_to_run, offer_stage=True)
                 query_buffer = ""
 
-    def _execute_query(self, query: str) -> None:
+    def _execute_query(
+        self,
+        query: str,
+        *,
+        offer_stage: bool = True,
+        preview_rows: Optional[int] = None,
+    ) -> None:
         if not self.db_connection:
             return
+        t0 = time.perf_counter()
         try:
             with self.console.status("[bold green]Executing...[/bold green]"):
                 res = self.db_connection.execute(query).fetchdf()
+            elapsed_ms = (time.perf_counter() - t0) * 1000
 
             if res.empty:
-                self.console.print("[yellow]No data returned.[/yellow]")
+                # DuckDB returns a zero-row frame with a single "Count" column for many
+                # DDL / mutation statements; distinguish from a normal empty SELECT result.
+                if len(res.columns) == 1 and str(res.columns[0]).lower() == "count":
+                    self.console.print("[green]Statement completed.[/green]")
+                else:
+                    self.console.print("[yellow]No data returned.[/yellow]")
+                self.console.print(f"[dim]{elapsed_ms:.1f} ms[/]")
             else:
                 self.logger.info("Query Successful")
-                self._display_results_table(res)
-                self._prompt_to_stage_results(res, query)
+                kw = {}
+                if preview_rows is not None:
+                    kw["preview_rows"] = preview_rows
+                self._display_results_table(res, **kw)
+                self.console.print(f"[dim]{elapsed_ms:.1f} ms[/]")
+                if offer_stage:
+                    self._prompt_to_stage_results(res, query)
         except Exception as e:
             self.logger.error(f"SQL Error: {e}")
 
     def _prompt_to_stage_results(self, results: pd.DataFrame, query: str) -> None:
-        if self.console.input("\nStage for export? (y/n): ").lower().startswith("y"):
-            name = self.console.input("Sheet name: ")
+        self.console.print()
+        if (
+            self.console.input(
+                "[bold]Stage this result for .export?[/] [dim](y/n)[/]: "
+            )
+            .lower()
+            .startswith("y")
+        ):
+            name = self.console.input("[bold cyan]Sheet name:[/] ")
             if name:
                 self.results_to_save[name] = results
                 self.recorder.record_query(name, query)
@@ -392,7 +566,9 @@ class SheetQL:
 
     # --- Exporting ---------------------------------------------------------------
 
-    def _export_dataframe(self, df: pd.DataFrame, export: ScriptExport, default_sheet: str) -> None:
+    def _export_dataframe(
+        self, df: pd.DataFrame, export: ScriptExport, default_sheet: str
+    ) -> None:
         """
         Export a single dataframe to the destination described by ScriptExport.
 
@@ -435,7 +611,9 @@ class SheetQL:
         raise ValueError("Unsupported export extension. Use .xlsx, .csv, or .json.")
 
     @staticmethod
-    def _calc_col_width(series: pd.Series, col_name: str, min_w: int = 8, max_w: int = 60) -> int:
+    def _calc_col_width(
+        series: pd.Series, col_name: str, min_w: int = 8, max_w: int = 60
+    ) -> int:
         """Calculate column width from actual content, capped between min_w and max_w."""
         try:
             max_data = int(series.astype(str).str.len().max()) if len(series) else 0
@@ -482,7 +660,9 @@ class SheetQL:
                                 cell.fill = fill
                             for i, col in enumerate(df.columns):
                                 col_letter = ws.cell(row=1, column=i + 1).column_letter
-                                ws.column_dimensions[col_letter].width = self._calc_col_width(df[col], col)
+                                ws.column_dimensions[col_letter].width = (
+                                    self._calc_col_width(df[col], col)
+                                )
                             ws.auto_filter.ref = ws.dimensions
 
             self.logger.info(f"Saved to '{os.path.basename(save_path)}' ({engine})")
@@ -518,6 +698,11 @@ class SheetQL:
             ".dump": lambda: self._dump_script(parts),
             ".runscript": lambda: self._run_script_interactive(parts),
             ".rename": lambda: self._rename_table(parts),
+            ".files": self._list_loaded_files,
+            ".peek": lambda: self._peek_table(parts),
+            ".count": lambda: self._count_table_rows(parts),
+            ".cwd": self._show_cwd,
+            ".clear": self._clear_screen,
         }
 
         if cmd not in commands:
@@ -527,7 +712,7 @@ class SheetQL:
         should_exit = commands[cmd]()
         if should_exit and cmd in [".exit", ".quit"] and self.results_to_save:
             if (
-                self.console.input("Export staged results? (y/n): ")
+                self.console.input("[bold]Export staged results?[/] [dim](y/n)[/]: ")
                 .lower()
                 .startswith("y")
             ):
@@ -545,32 +730,128 @@ class SheetQL:
             self.logger.error(f"Failed to dump script: {e}")
 
     def _show_help(self) -> None:
-        self.console.print("\n[bold]Commands:[/bold]")
-        self.console.print(
-            "  .help, .tables, .schema <t>, .history, .load, .rename <o> <n>, .export, .exit"
+        help_text = (
+            "[cyan].help[/]              This list\n"
+            "[cyan].tables[/]            List DuckDB tables\n"
+            "[cyan].files[/]             Files you opened → table names\n"
+            "[cyan].peek[/] [dim]t [n][/]         First [dim]n[/] rows of table [dim]t[/] (default 15)\n"
+            "[cyan].count[/] [dim]t[/]           Row count for table [dim]t[/]\n"
+            "[cyan].schema[/] [dim]t[/]          Describe table [dim]t[/]\n"
+            "[cyan].history[/]           Numbered history; [dim]![/][dim]n[/] re-runs a query\n"
+            "[cyan].load[/]               Add files (picker or paths here)\n"
+            "[cyan].rename[/] [dim]old new[/]   Rename a table / view\n"
+            "[cyan].export[/]             Write staged sheets to Excel\n"
+            "[cyan].dump[/] [dim][file][/]       Save session as YAML\n"
+            "[cyan].runscript[/] [dim]file[/]   Run a YAML batch script\n"
+            "[cyan].cwd[/]                Show working directory (for paths)\n"
+            "[cyan].clear[/]              Clear the terminal screen\n"
+            "[cyan].exit[/]  [cyan].quit[/]        Leave (offers export if staged)"
         )
         self.console.print(
-            "  [bold yellow].dump <file>[/bold yellow]   Save current session to YAML"
-        )
-        self.console.print(
-            "  [bold yellow].runscript <file>[/bold yellow] Run a YAML script"
+            Panel(
+                help_text,
+                title="[bold]Meta-commands[/]",
+                border_style="yellow",
+                expand=False,
+            )
         )
 
     def _list_tables(self) -> None:
         if self.db_connection:
             try:
                 tables = self.db_connection.execute("SHOW TABLES").fetchdf()["name"]
-                self.console.print(f"\n[cyan]Tables ({len(tables)}):[/cyan]")
-                for t in tables:
-                    self.console.print(f" - {t}")
+                names = tables.tolist() if hasattr(tables, "tolist") else list(tables)
+                tree = Tree(f"[bold]Tables[/] [dim]({len(names)})[/]")
+                for t in names:
+                    tree.add(f"[cyan]{t}[/]")
+                self.console.print(tree)
             except Exception:
                 pass
 
+    def _list_loaded_files(self) -> None:
+        """Show each file path and the DuckDB table names created from it."""
+        if not self.loaded_files_map:
+            self.console.print(
+                "[dim]Nothing loaded in this session yet. Use .load or restart and pick files.[/]"
+            )
+            return
+        tree = Tree("[bold]Loaded files[/]")
+        for path, tables in self.loaded_files_map.items():
+            branch = tree.add(f"[cyan]{path}[/]")
+            for t in tables:
+                branch.add(f"[dim]→[/] [white]{t}[/]")
+        self.console.print(tree)
+
+    def _peek_table(self, parts: List[str]) -> None:
+        """Run SELECT * … LIMIT n without staging prompts (quick look at a table)."""
+        if len(parts) < 2:
+            self.logger.warning("Usage: .peek <table> [rows]")
+            return
+        name = parts[1].strip()
+        if not name:
+            self.logger.warning("Usage: .peek <table> [rows]")
+            return
+        n = 15
+        if len(parts) >= 3:
+            try:
+                n = max(1, min(int(parts[2]), 50_000))
+            except ValueError:
+                self.logger.warning("Rows must be an integer.")
+                return
+        qn = quote_duckdb_identifier(name)
+        sql = f"SELECT * FROM {qn} LIMIT {n};"
+        self._execute_query(sql, offer_stage=False, preview_rows=min(n, 500))
+
+    def _count_table_rows(self, parts: List[str]) -> None:
+        """Print row count for a table (faster than typing COUNT(*))."""
+        if len(parts) != 2:
+            self.logger.warning("Usage: .count <table>")
+            return
+        name = parts[1].strip()
+        if not name:
+            self.logger.warning("Usage: .count <table>")
+            return
+        if not self.db_connection:
+            return
+        t0 = time.perf_counter()
+        try:
+            qn = quote_duckdb_identifier(name)
+            df = self.db_connection.execute(
+                f"SELECT COUNT(*) AS row_count FROM {qn}"
+            ).fetchdf()
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            n = int(df.iloc[0]["row_count"])
+            self.console.print(
+                f"[bold]{name}[/]: [cyan]{n:,}[/] row(s)  [dim]({elapsed_ms:.1f} ms)[/]"
+            )
+        except Exception as e:
+            self.logger.error(str(e))
+
+    def _show_cwd(self) -> None:
+        self.console.print(
+            Panel(os.getcwd(), title="[bold]Working directory[/]", expand=False)
+        )
+
+    def _clear_screen(self) -> None:
+        self.console.clear()
+        self.console.print("[dim]Screen cleared · type SQL or .help[/]")
+
     def _describe_table(self, parts: List[str]) -> None:
         if len(parts) == 2 and self.db_connection:
+            name = parts[1].strip()
+            if not name:
+                self.logger.warning("Usage: .schema <table>")
+                return
             try:
-                df = self.db_connection.execute(f"DESCRIBE {parts[1]}").fetchdf()
-                t = Table(title=f"Schema: {parts[1]}")
+                df = self.db_connection.execute(
+                    f"DESCRIBE {quote_duckdb_identifier(name)}"
+                ).fetchdf()
+                t = Table(
+                    title=f"Schema: {name}",
+                    box=box.ROUNDED,
+                    show_header=True,
+                    header_style="bold magenta",
+                )
                 for c in df.columns:
                     t.add_column(c)
                 for _, r in df.iterrows():
@@ -586,22 +867,7 @@ class SheetQL:
                 new_raw = parts[2]
                 new = normalize_name(new_raw)
 
-                # Detect whether the object is a VIEW or a registered DataFrame (BASE TABLE)
-                # so we issue the correct DDL. ALTER VIEW fails on registered DataFrames and
-                # ALTER TABLE fails on views.
-                try:
-                    type_df = self.db_connection.execute(
-                        "SELECT table_type FROM information_schema.tables WHERE table_name = ?",
-                        [old],
-                    ).fetchdf()
-                    obj_type = type_df.iloc[0]["table_type"] if not type_df.empty else "VIEW"
-                except Exception:
-                    obj_type = "VIEW"  # safe fallback
-
-                if obj_type == "VIEW":
-                    self.db_connection.execute(f'ALTER VIEW "{old}" RENAME TO "{new}"')
-                else:
-                    self.db_connection.execute(f'ALTER TABLE "{old}" RENAME TO "{new}"')
+                rename_relation(self.db_connection, old, new)
 
                 self.logger.info(f"Renamed {old} -> {new}")
 
@@ -622,8 +888,15 @@ class SheetQL:
                 self.logger.error(str(e))
 
     def _show_history(self) -> None:
+        if not self.history:
+            self.console.print("[dim]No queries in history yet.[/]")
+            return
+        self.console.print(Rule("[bold]History[/]", style="dim"))
         for i, c in enumerate(self.history, 1):
-            self.console.print(f"{i}: {c}")
+            snippet = c.strip().replace("\n", " ")
+            if len(snippet) > 100:
+                snippet = snippet[:97] + "…"
+            self.console.print(f"[dim]{i:>3}.[/] [cyan]{snippet}[/]")
 
     def _handle_history_rerun(self, cmd: str) -> None:
         try:
@@ -668,7 +941,9 @@ class SheetQL:
 
         if options.memory_limit:
             try:
-                self.db_connection.execute(f"SET memory_limit='{options.memory_limit}';")
+                self.db_connection.execute(
+                    f"SET memory_limit='{options.memory_limit}';"
+                )
             except Exception:
                 self.logger.debug("DuckDB memory limit config failed. Using defaults.")
 
@@ -681,23 +956,21 @@ class SheetQL:
 
                 found_tables = resolve_alias_targets(self.loaded_files_map, item.path)
                 if not found_tables:
-                    self.logger.warning(f"No loaded tables found for input '{item.path}'.")
+                    self.logger.warning(
+                        f"No loaded tables found for input '{item.path}'."
+                    )
                     continue
 
                 alias_safe = normalize_name(item.alias)
 
                 if len(found_tables) == 1:
-                    self.db_connection.execute(
-                        f'ALTER VIEW "{found_tables[0]}" RENAME TO "{alias_safe}"'
-                    )
+                    rename_relation(self.db_connection, found_tables[0], alias_safe)
                     self.logger.info(f"Aliased {found_tables[0]} -> {alias_safe}")
                 else:
                     for tbl in found_tables:
                         suffix = tbl.split("_", 1)[-1] if "_" in tbl else "sheet"
                         new_name = normalize_name(f"{item.alias}_{suffix}")
-                        self.db_connection.execute(
-                            f'ALTER VIEW "{tbl}" RENAME TO "{new_name}"'
-                        )
+                        rename_relation(self.db_connection, tbl, new_name)
                         self.logger.info(f"Aliased {tbl} -> {new_name}")
 
         for task in tasks:
@@ -723,4 +996,3 @@ class SheetQL:
 
 
 __all__ = ["SheetQL"]
-
