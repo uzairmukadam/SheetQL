@@ -311,7 +311,7 @@ def build_parser(*, prog: Optional[str] = None) -> argparse.ArgumentParser:
         epilog=(
             "Examples:\n"
             f'  {prog} query -i report.xlsx -q "SELECT * FROM report_sheet LIMIT 10"\n'
-            f"  {prog} query -i a.csv b.csv --alias m=a_csv -q \"SELECT * FROM m\"\n"
+            f'  {prog} query -i a.csv b.csv --alias m=a_csv -q "SELECT * FROM m"\n'
             f'  {prog} query -i big.parquet -q "SELECT COUNT(*) FROM big_parquet" -o out.csv'
         ),
     )

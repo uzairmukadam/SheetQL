@@ -41,26 +41,20 @@ class TestFetchLatestReleaseTag(unittest.TestCase):
     @patch("sheetql.update_check.urllib.request.urlopen")
     def test_fetch_ok(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = self._mock_response({"tag_name": "v4.0.1"})
-        tag = fetch_latest_release_tag(
-            "owner/repo", timeout=1.0, user_agent="Test/1"
-        )
+        tag = fetch_latest_release_tag("owner/repo", timeout=1.0, user_agent="Test/1")
         self.assertEqual(tag, "v4.0.1")
         mock_urlopen.assert_called_once()
 
     @patch("sheetql.update_check.urllib.request.urlopen")
     def test_fetch_missing_tag(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = self._mock_response({})
-        tag = fetch_latest_release_tag(
-            "owner/repo", timeout=1.0, user_agent="Test/1"
-        )
+        tag = fetch_latest_release_tag("owner/repo", timeout=1.0, user_agent="Test/1")
         self.assertIsNone(tag)
 
     @patch("sheetql.update_check.urllib.request.urlopen")
     def test_fetch_malformed_tag(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = self._mock_response({"tag_name": "not-a-version"})
-        tag = fetch_latest_release_tag(
-            "owner/repo", timeout=1.0, user_agent="Test/1"
-        )
+        tag = fetch_latest_release_tag("owner/repo", timeout=1.0, user_agent="Test/1")
         self.assertIsNone(tag)
 
     @patch("sheetql.update_check.urllib.request.urlopen")
@@ -68,18 +62,14 @@ class TestFetchLatestReleaseTag(unittest.TestCase):
         import urllib.error
 
         mock_urlopen.side_effect = urllib.error.URLError("offline")
-        tag = fetch_latest_release_tag(
-            "owner/repo", timeout=1.0, user_agent="Test/1"
-        )
+        tag = fetch_latest_release_tag("owner/repo", timeout=1.0, user_agent="Test/1")
         self.assertIsNone(tag)
 
 
 class TestRunUpdateCheck(unittest.TestCase):
     @patch("sheetql.update_check.fetch_latest_release_tag")
     @patch("sheetql.update_check.get_package_version")
-    def test_update_available(
-        self, mock_ver: MagicMock, mock_fetch: MagicMock
-    ) -> None:
+    def test_update_available(self, mock_ver: MagicMock, mock_fetch: MagicMock) -> None:
         mock_ver.return_value = "4.0.0"
         mock_fetch.return_value = "v4.0.1"
         r = run_update_check(repo="x/y", timeout=1.0)

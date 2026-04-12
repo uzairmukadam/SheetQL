@@ -135,8 +135,7 @@ class SheetQL:
             '<style fg="#a3a3a3">'
             "SheetQL — "
             ".help · .tables · .files · .peek · .load · .export · .dump · .exit"
-            "</style>"
-            + suffix
+            "</style>" + suffix
         )
 
     def _start_release_check_thread(self) -> None:
