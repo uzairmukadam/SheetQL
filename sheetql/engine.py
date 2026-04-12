@@ -1,8 +1,10 @@
-import os
+import html
 import logging
+import os
+import threading
 import time
 from collections import deque
-from typing import Any, Optional, List, Tuple, Dict
+from typing import Any, Dict, List, Optional, Tuple
 
 import duckdb
 import pandas as pd
@@ -15,7 +17,7 @@ from rich.table import Table
 from rich.tree import Tree
 
 from sheetql.completion import SheetQLCompleter
-from sheetql.constants import DEFAULT_MEMORY_LIMIT
+from sheetql.constants import DEFAULT_MEMORY_LIMIT, YAML_SCRIPT_SUFFIXES
 from sheetql.duckdb_util import (
     apply_performance_pragmas,
     fetch_columns_by_table,
@@ -36,6 +38,11 @@ from sheetql.scripting import (
     ScriptExport,
     parse_script_config,
     resolve_alias_targets,
+)
+from sheetql.update_check import (
+    UpdateCheckOutcome,
+    UpdateCheckResult,
+    run_update_check,
 )
 
 if PROMPT_TOOLKIT_AVAILABLE:
@@ -90,6 +97,9 @@ class SheetQL:
 
         self.loaded_files_map: Dict[str, List[str]] = {}
 
+        self._update_check_lock = threading.Lock()
+        self._toolbar_update_suffix_html = ""
+
         self.session = None
         if (
             PROMPT_TOOLKIT_AVAILABLE
@@ -111,21 +121,68 @@ class SheetQL:
                     complete_while_typing=True,
                     auto_suggest=AutoSuggestFromHistory(),
                     reserve_space_for_menu=8,
-                    bottom_toolbar=lambda: HTML(
-                        '<style fg="#a3a3a3">'
-                        "SheetQL — "
-                        ".help · .tables · .files · .peek · .load · .export · .dump · .exit"
-                        "</style>"
-                    ),
+                    bottom_toolbar=lambda: self._bottom_toolbar_html(),
                 )
             except Exception:
                 self.session = None
+
+    def _bottom_toolbar_html(self):
+        if HTML is None:
+            return ""
+        with self._update_check_lock:
+            suffix = self._toolbar_update_suffix_html
+        return HTML(
+            '<style fg="#a3a3a3">'
+            "SheetQL — "
+            ".help · .tables · .files · .peek · .load · .export · .dump · .exit"
+            "</style>"
+            + suffix
+        )
+
+    def _start_release_check_thread(self) -> None:
+        if not self.session:
+            return
+
+        def worker() -> None:
+            try:
+                result = run_update_check()
+            except Exception:
+                self.logger.debug("Release check raised", exc_info=True)
+                result = UpdateCheckResult(outcome=UpdateCheckOutcome.CHECK_FAILED)
+
+            with self._update_check_lock:
+                if (
+                    result.outcome == UpdateCheckOutcome.UPDATE_AVAILABLE
+                    and result.remote_tag
+                ):
+                    esc = html.escape(result.remote_tag, quote=False)
+                    self._toolbar_update_suffix_html = (
+                        f' · <style fg="#2dd4bf">Update available: {esc}</style>'
+                    )
+                elif result.outcome == UpdateCheckOutcome.CHECK_FAILED:
+                    self._toolbar_update_suffix_html = (
+                        ' · <style fg="#737373">Could not check for updates</style>'
+                    )
+                else:
+                    self._toolbar_update_suffix_html = ""
+
+            try:
+                app = getattr(self.session, "app", None)
+                if app is not None:
+                    app.invalidate()
+            except Exception:
+                pass
+
+        threading.Thread(
+            target=worker, daemon=True, name="sheetql-github-release-check"
+        ).start()
 
     # --- Lifecycle / entrypoints -------------------------------------------------
 
     def run_interactive(self) -> None:
         try:
             self._display_welcome()
+            self._start_release_check_thread()
             self._init_db()
 
             if initial_paths := self._prompt_for_paths(
@@ -154,6 +211,8 @@ class SheetQL:
         if not YAML_AVAILABLE or yaml is None:
             self.logger.error("PyYAML is not installed.")
             return
+
+        self._warn_unexpected_yaml_extension(config_path)
 
         try:
             with open(config_path, "r") as f:
@@ -742,7 +801,7 @@ class SheetQL:
             "[cyan].rename[/] [dim]old new[/]   Rename a table / view\n"
             "[cyan].export[/]             Write staged sheets to Excel\n"
             "[cyan].dump[/] [dim][file][/]       Save session as YAML\n"
-            "[cyan].runscript[/] [dim]file[/]   Run a YAML batch script\n"
+            "[cyan].runscript[/] [dim]file[/]   Run a YAML batch script (.yaml or .yml)\n"
             "[cyan].cwd[/]                Show working directory (for paths)\n"
             "[cyan].clear[/]              Clear the terminal screen\n"
             "[cyan].exit[/]  [cyan].quit[/]        Leave (offers export if staged)"
@@ -912,6 +971,13 @@ class SheetQL:
 
     # --- YAML scripting ----------------------------------------------------------
 
+    def _warn_unexpected_yaml_extension(self, path: str) -> None:
+        ext = os.path.splitext(path)[1].lower()
+        if ext and ext not in YAML_SCRIPT_SUFFIXES:
+            self.logger.warning(
+                f"Script path extension is '{ext}'; expected .yaml or .yml. Loading anyway."
+            )
+
     def _run_script_interactive(self, parts: List[str]) -> None:
         script_path = parts[1] if len(parts) > 1 else None
         if not script_path:
@@ -920,6 +986,8 @@ class SheetQL:
         if not YAML_AVAILABLE or yaml is None:
             self.logger.error("PyYAML missing.")
             return
+
+        self._warn_unexpected_yaml_extension(script_path)
 
         try:
             with open(script_path, "r") as f:

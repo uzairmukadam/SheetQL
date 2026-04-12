@@ -1,12 +1,16 @@
 """
-SheetQL: Professional Data Analysis & ETL Tool
+SheetQL — primary entry when running from a git clone.
 
-This module implements an interactive Command Line Interface (CLI) for querying
-flat files (CSV, Excel, Parquet, JSON) using SQL.
+Typical use (from the repo root, with a venv activated)::
+
+    pip install -r requirements.txt
+    python sheet_ql.py                    # interactive SQL shell
+    python sheet_ql.py -r pipeline.yml  # YAML batch
+    python sheet_ql.py query -i data.csv -q "SELECT 1"  # subcommands (same as sheetql CLI)
 
 Architecture:
-- CSV/Parquet/JSON: Uses DuckDB's "Zero-Copy" views for high performance on large files.
-- Excel: Uses Pandas to bridge data into DuckDB (requires memory for loading).
+- CSV/Parquet/JSON: DuckDB zero-copy views where possible.
+- Excel: Pandas bridges into DuckDB (in-memory for loaded sheets).
 """
 
 import argparse
@@ -16,9 +20,7 @@ from sheetql.logging import setup_logging
 
 
 def main() -> None:
-    # Backwards-compatible entrypoint:
-    # - supports legacy `python sheet_ql.py --debug` and `python sheet_ql.py -r script.yaml`
-    # - supports richer subcommand CLI via `sheetql.cli`
+    # Top-level flags for the app entry; remaining args go to the shared CLI (query, run, …).
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("-r", "--run", dest="config_path", help="Run batch config")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")

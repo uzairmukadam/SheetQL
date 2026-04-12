@@ -1,14 +1,12 @@
 # -----------------------------------------------------------------------------
-# SheetQL v4.0.0 — requirements.txt
+# SheetQL — application dependencies (primary install path)
 #
-# This file covers all dependencies for running SheetQL via sheet_ql.py
-# (Option A — no package install required).
-#
-# Install everything:
+# After cloning the repo and creating a venv (recommended):
 #   pip install -r requirements.txt
+#   python sheet_ql.py
 #
-# If you install SheetQL as a package (Option B), use the extras instead:
-#   pip install -e ".[all]"
+# Optional: pip install -e ".[all]" to register the `sheetql` command on PATH
+# (same dependency sets as extras in pyproject.toml).
 # -----------------------------------------------------------------------------
 
 # --- Core (Required) ---------------------------------------------------------

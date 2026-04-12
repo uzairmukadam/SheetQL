@@ -1,7 +1,7 @@
 import argparse
 import json
 import sys
-from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -11,6 +11,7 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.tree import Tree
 
+from sheetql.constants import get_package_version
 from sheetql.duckdb_util import fetch_columns_by_table, rename_relation
 from sheetql.engine import SheetQL
 from sheetql.logging import setup_logging
@@ -20,11 +21,18 @@ CLI_QUERY_PREVIEW_ROWS = 50
 _JSON_INDENT = 2 if sys.stdout.isatty() else None
 
 
-def _package_version() -> str:
-    try:
-        return version("sheetql")
-    except PackageNotFoundError:
-        return "4.0.0"
+def _default_prog() -> str:
+    """Usage banner: sheet_ql.py when run from clone, else entry name (e.g. sheetql.exe)."""
+    if not sys.argv:
+        return "sheetql"
+    name = Path(sys.argv[0]).name
+    if name in ("pytest", "py.test"):
+        return "sheetql"
+    if name == "__main__.py":
+        return "python -m sheetql"
+    if name.endswith(".py"):
+        return name
+    return name or "sheetql"
 
 
 def _parse_aliases(items: Optional[List[str]]) -> Dict[str, str]:
@@ -234,9 +242,10 @@ def _cmd_query(args: argparse.Namespace) -> int:
     return 0
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(*, prog: Optional[str] = None) -> argparse.ArgumentParser:
+    prog = prog if prog is not None else _default_prog()
     parser = argparse.ArgumentParser(
-        prog="sheetql",
+        prog=prog,
         description=(
             "Run SQL over spreadsheets and flat files (CSV, Excel, Parquet, JSON) "
             "using DuckDB in-process."
@@ -244,14 +253,14 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "With no subcommand, the interactive shell starts (same as "
-            "`sheetql interactive`).\n"
-            "Use `sheetql <command> --help` for subcommand options."
+            f"`{prog} interactive`).\n"
+            f"Use `{prog} <command> --help` for subcommand options."
         ),
     )
     parser.add_argument(
         "--version",
         action="version",
-        version=f"%(prog)s {_package_version()}",
+        version=f"%(prog)s {get_package_version()}",
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument("--log-file", default="sheetql.log", help="Log file path")
@@ -268,9 +277,14 @@ def build_parser() -> argparse.ArgumentParser:
         "run",
         help="Run a YAML batch script (inputs, tasks, export)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Example:\n  sheetql run -c pipeline.yaml",
+        epilog=f"Example:\n  {prog} run -c pipeline.yaml\n  {prog} run -c pipeline.yml",
     )
-    p_run.add_argument("-c", "--config", required=True, help="Path to YAML config")
+    p_run.add_argument(
+        "-c",
+        "--config",
+        required=True,
+        help="Path to YAML script (.yaml or .yml)",
+    )
     p_run.set_defaults(func=_cmd_run)
 
     p_inspect = sub.add_parser(
@@ -279,8 +293,8 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  sheetql inspect -i sales.csv\n"
-            "  sheetql inspect -i data/*.parquet --schema"
+            f"  {prog} inspect -i sales.csv\n"
+            f"  {prog} inspect -i data/*.parquet --schema"
         ),
     )
     p_inspect.add_argument(
@@ -296,9 +310,9 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            '  sheetql query -i report.xlsx -q "SELECT * FROM report_sheet LIMIT 10"\n'
-            '  sheetql query -i a.csv b.csv --alias m=a_csv -q "SELECT * FROM m"\n'
-            '  sheetql query -i big.parquet -q "SELECT COUNT(*) FROM big_parquet" -o out.csv'
+            f'  {prog} query -i report.xlsx -q "SELECT * FROM report_sheet LIMIT 10"\n'
+            f"  {prog} query -i a.csv b.csv --alias m=a_csv -q \"SELECT * FROM m\"\n"
+            f'  {prog} query -i big.parquet -q "SELECT COUNT(*) FROM big_parquet" -o out.csv'
         ),
     )
     p_query.add_argument("-i", "--input", required=True, nargs="+", help="Input files")

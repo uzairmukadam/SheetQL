@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sheetql"
-version = "4.0.0"
-description = "SheetQL Professional Data Analysis & ETL Tool"
+dynamic = ["version"]
+description = "SheetQL — terminal SQL over spreadsheets and flat files (Python app; run from clone via sheet_ql.py)"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
@@ -21,7 +21,7 @@ ui    = ["prompt_toolkit>=3.0.0", "pygments>=2.15.0"]
 perf  = ["python-calamine>=0.2.0", "xlsxwriter>=3.1.0"]
 batch = ["pyyaml>=6.0.0"]
 all   = ["sheetql[ui,perf,batch]"]
-dev   = ["pytest>=8.0.0", "nuitka>=2.0.0"]
+dev   = ["pytest>=8.0.0", "nuitka[onefile]>=2.0.0", "pyinstaller>=6.6.0"]
 
 [project.scripts]
 sheetql = "sheetql.cli:main"
@@ -29,6 +29,9 @@ sheetql = "sheetql.cli:main"
 [tool.setuptools.packages.find]
 where   = ["."]
 include = ["sheetql*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "sheetql._version.__version__" }
 
 [tool.black]
 line-length = 88

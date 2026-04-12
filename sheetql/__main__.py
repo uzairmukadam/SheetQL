@@ -1,7 +1,11 @@
 """
-Entry point for ``python -m sheetql`` and Nuitka compilation.
+Entry point for ``python -m sheetql`` (after ``pip install -e .``) and for frozen builds.
 
-Usage::
+From a git clone, prefer::
+
+    python sheet_ql.py [subcommand] [options]
+
+Equivalent when the package is installed::
 
     python -m sheetql [subcommand] [options]
     python -m sheetql --help
